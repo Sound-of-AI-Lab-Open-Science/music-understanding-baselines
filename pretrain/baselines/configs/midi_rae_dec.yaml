@@ -1,0 +1,88 @@
+# MIDI-RAE-JEPA Swin decoder pre-training (frozen encoder -> piano-roll reconstruction).
+#
+# Every hyperparameter below is copied verbatim from the paper's own
+# 5-epoch "backup" recipe (drscotthawley/midi-rae,
+# configs/config_swin_full_backup.yaml). `model.*` (the encoder architecture)
+# MUST match whatever produced `encoder_ckpt` below -- the decoder loads those
+# frozen weights by shape, not by config diffing, so a mismatch fails at
+# load_state_dict with a shape error, not silently.
+#
+# encoder_ckpt: point this at the checkpoint a `midi_rae_enc` run wrote.
+# train.py's own default output layout is
+#   ${RUN_ROOT}/midi_rae_enc/checkpoints/final.ckpt   (always written, any run length)
+#   ${RUN_ROOT}/midi_rae_enc/checkpoints/midi_rae_enc-best-*.ckpt   (best val/loss)
+# `final.ckpt` is used as the default here because it is unconditional; swap
+# it for a `-best-*` checkpoint once you know its exact filename.
+#
+# Scope note (see midi_rae_decoder_module.py docstring): upstream's optional
+# `emb_mask_ratio` embedding-robustness training path is not ported -- this
+# recipe does not set it (upstream default is also 0.0 = a no-op), so nothing
+# this config exercises is missing.
+#
+# Environment: the `midi_rae` conda env (envs/midi_rae.yml).
+# Run it as: python baselines/train.py --model midi_rae_dec \
+#     --config baselines/configs/midi_rae_dec.yaml --midi-dir <dir> [--smoke]
+
+seed: 42
+
+encoder_ckpt: ${RUN_ROOT}/midi_rae_enc/checkpoints/final.ckpt
+
+data:
+  image_size: 128
+  in_channels: 1
+
+model:
+  encoder: swin
+  patch_h: 4
+  patch_w: 4
+  embed_dim: 8
+  depths: [2, 2, 2, 6, 2, 1]
+  num_heads: [2, 2, 2, 4, 8, 16]
+  window_size: 4
+  mlp_ratio: 4.0
+  drop_path_rate: 0.1
+  dec_depths: [4, 4, 4, 6, 2, 1]
+  dec_num_heads: [2, 2, 2, 4, 8, 16]
+
+training:
+  dec_batch_size: 360
+  dec_epochs: 5
+  dec_lr: 2.0e-3
+  pos_weight: 2.5
+  max_shift_y: 12          # augmentation only, reused from the shared ShardedAnchorDataset
+  enc_ft_lr: -1             # <=0 => encoder frozen (the only mode this port implements)
+  num_workers: [6, 4]
+
+trainer:
+  max_epochs: 5
+  max_steps: -1
+  accelerator: gpu
+  devices: 1
+  precision: bf16-mixed
+  gradient_clip_val: 1.0
+  log_every_n_steps: 50
+  ckpt_every_n_steps: 1000
+  val_check_interval: 1.0
+  limit_val_batches: 1.0
+  num_sanity_val_steps: 0
+  enable_progress_bar: false
+
+smoke:
+  limit_files: 20
+  data:
+    image_size: 128
+    val_frac: 0.2   # 20 files * 0.02 production val_frac would round to 0 val files
+  training:
+    dec_batch_size: 4
+    dec_epochs: 1
+    num_workers: [0, 0]
+  trainer:
+    max_epochs: 1
+    max_steps: 5
+    accelerator: cpu
+    devices: 1
+    precision: 32-true
+    log_every_n_steps: 1
+    ckpt_every_n_steps: 100
+    val_check_interval: 1.0
+    limit_val_batches: 2

@@ -1,0 +1,48 @@
+# Environment for the two MIDI-RAE-JEPA arms (midi_rae_enc / midi_rae_dec):
+# piano-roll tokenization, both pre-training runs, and their shared library
+# code (baselines/models/midi_rae_lib/, ported from drscotthawley/midi-rae --
+# see THIRD_PARTY_NOTICES.md).
+#
+# A FOURTH, separate environment -- not reused from $JEPA_ENV or $MUSETOK_ENV
+# -- because midi_rae needs `timm` (for its Swin V2 building blocks) and
+# `pretty_midi` (piano-roll rasterization), neither of which the other two
+# environments carry, and because midi_rae's own upstream pins `torch`
+# unconstrained rather than the CUDA-specific wheel jepa-music.yml locks.
+#
+# Unlike envs/jepa-music.yml and envs/musetok.yml, this is NOT a frozen
+# `conda env export` from a live run (no GPU job has trained through this
+# integration yet) -- it is a minimal, version-unpinned spec built from
+# midi-rae's own pyproject.toml dependency list
+# (https://github.com/drscotthawley/midi-rae, see pretrain/midi_rae/pyproject.toml
+# before its removal in this commit) plus `lightning`, matching the Lightning
+# package MuseTok's wrapper uses (baselines/models/musetok_module.py) rather
+# than jepa/musicbert's `pytorch_lightning`. `hydra-core` and `wandb` are
+# dropped: this scaffold uses plain YAML configs and CSVLogger, like every
+# other arm behind baselines/train.py, not upstream's Hydra + Weights & Biases
+# training scripts.
+#
+#     conda env create -n midi-rae -f envs/midi_rae.yml
+#
+# Pin this file to exact versions (`conda env export --no-builds`) once a real
+# training run has gone through it -- see the two sibling env files for the
+# format to follow.
+channels:
+  - conda-forge
+  - pytorch
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - torch
+      - lightning
+      - numpy
+      - pillow
+      - pretty_midi
+      - scipy
+      - timm
+      - scikit-learn
+      - lpips
+      - tqdm
+      - matplotlib
+      - plotly
+      - pyyaml

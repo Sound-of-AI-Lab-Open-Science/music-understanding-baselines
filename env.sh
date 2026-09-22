@@ -79,6 +79,7 @@ fi
 
 _jr_default JEPA_ENV            jepa_env
 _jr_default MUSETOK_ENV         musetok_env
+_jr_default MIDI_RAE_ENV        midi_rae_env
 _jr_default BENCHMIR_ENV        benchmir_env
 _jr_default BENCHMIR_ROOT       benchmir_root
 _jr_default MUSETOK_REPO        musetok_repo
@@ -143,11 +144,13 @@ export PYTHONIOENCODING=utf-8
 # Helpers used by the entry points and the SLURM templates.
 # ---------------------------------------------------------------------------
 
-#: The four pre-training arms.  An "arm" is one (model, recipe, corpus codec)
+#: The pre-training arms.  An "arm" is one (model, recipe, corpus codec)
 #: triple; everything downstream -- the config, the interpreter, the union
 #: cache, the run directory, the checkpoint name -- is derived from its name, so
 #: nothing has to be kept in sync by hand.
-JR_ARMS="jepa_paper jepa_champA musetok musicbert"
+#: midi_rae_enc/midi_rae_dec added alongside the original four -- additive
+#: only, the four above are untouched.
+JR_ARMS="jepa_paper jepa_champA musetok musicbert midi_rae_enc midi_rae_dec"
 export JR_ARMS
 
 jr_arm_model() {                 # arm -> the model train.py implements
@@ -155,6 +158,8 @@ jr_arm_model() {                 # arm -> the model train.py implements
     jepa_paper|jepa_champA) printf 'jepa' ;;
     musetok)                printf 'musetok' ;;
     musicbert)              printf 'musicbert' ;;
+    midi_rae_enc)            printf 'midi_rae_enc' ;;
+    midi_rae_dec)            printf 'midi_rae_dec' ;;
     *) echo "unknown arm '$1' (have: $JR_ARMS)" >&2; return 2 ;;
   esac
 }
@@ -163,6 +168,7 @@ jr_arm_codec() {                 # arm -> which tokenization it consumes
   case "$1" in
     musetok)                          printf 'remi' ;;
     jepa_paper|jepa_champA|musicbert) printf 'octuple' ;;
+    midi_rae_enc|midi_rae_dec)        printf 'pianoroll' ;;
     *) echo "unknown arm '$1' (have: $JR_ARMS)" >&2; return 2 ;;
   esac
 }
@@ -172,6 +178,7 @@ jr_arm_env() {                   # arm -> conda environment name
     musetok)                          printf '%s' "$MUSETOK_ENV" ;;
     jepa_paper|jepa_champA)           printf '%s' "$JEPA_ENV" ;;
     musicbert)                        printf '%s' "$MUSICBERT_ENV" ;;
+    midi_rae_enc|midi_rae_dec)        printf '%s' "$MIDI_RAE_ENV" ;;
     *) echo "unknown arm '$1' (have: $JR_ARMS)" >&2; return 2 ;;
   esac
 }

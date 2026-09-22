@@ -1,3 +1,17 @@
+# checkpoint_path below points at the integrated pipeline's default output
+# (pretrain/baselines, arm midi_rae_enc) rather than the removed standalone
+# pretrain/midi_rae/ script's output.
+#
+# KNOWN RISK, not fixed by this change: `${RUN_ROOT}/midi_rae_enc/checkpoints/
+# final.ckpt` is a Lightning checkpoint (top-level "state_dict", keys prefixed
+# "encoder."), not the upstream-style {"model_state_dict": ...} dict
+# eval/benchmir/patches/midi_rae_jepa.py's `load_checkpoint` (from midi_rae.utils)
+# expects. That adapter has NOT been updated in this change -- it needs either
+# its own state-dict-shape handling (mirroring
+# baselines/models/midi_rae_decoder_module.py::_load_frozen_encoder) or a
+# small export step that writes a bare encoder state_dict from the Lightning
+# checkpoint, before this eval config can be run against the new pipeline's
+# output.
 run:
   run_id: "midirae_backup_eval_v1"
   seed: 42
@@ -13,63 +27,63 @@ model:
     model_id: "midirae-backup-concat"
     supported_formats: ["midi"]
     kwargs:
-      checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt"
+      checkpoint_path: "${RUN_ROOT}/midi_rae_enc/checkpoints/final.ckpt"
       level: "concat"
       frame_mode: false
       device: "cuda"
   - class: "MidiRaeJepaEmbeddingModel"
     model_id: "midirae-backup-L0"
     supported_formats: ["midi"]
-    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: 0, frame_mode: false, device: "cuda"}
+    kwargs: {checkpoint_path: "${RUN_ROOT}/midi_rae_enc/checkpoints/final.ckpt", level: 0, frame_mode: false, device: "cuda"}
   - class: "MidiRaeJepaEmbeddingModel"
     model_id: "midirae-backup-L1"
     supported_formats: ["midi"]
-    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: 1, frame_mode: false, device: "cuda"}
+    kwargs: {checkpoint_path: "${RUN_ROOT}/midi_rae_enc/checkpoints/final.ckpt", level: 1, frame_mode: false, device: "cuda"}
   - class: "MidiRaeJepaEmbeddingModel"
     model_id: "midirae-backup-L2"
     supported_formats: ["midi"]
-    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: 2, frame_mode: false, device: "cuda"}
+    kwargs: {checkpoint_path: "${RUN_ROOT}/midi_rae_enc/checkpoints/final.ckpt", level: 2, frame_mode: false, device: "cuda"}
   - class: "MidiRaeJepaEmbeddingModel"
     model_id: "midirae-backup-L3"
     supported_formats: ["midi"]
-    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: 3, frame_mode: false, device: "cuda"}
+    kwargs: {checkpoint_path: "${RUN_ROOT}/midi_rae_enc/checkpoints/final.ckpt", level: 3, frame_mode: false, device: "cuda"}
   - class: "MidiRaeJepaEmbeddingModel"
     model_id: "midirae-backup-L4"
     supported_formats: ["midi"]
-    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: 4, frame_mode: false, device: "cuda"}
+    kwargs: {checkpoint_path: "${RUN_ROOT}/midi_rae_enc/checkpoints/final.ckpt", level: 4, frame_mode: false, device: "cuda"}
   - class: "MidiRaeJepaEmbeddingModel"
     model_id: "midirae-backup-L5"
     supported_formats: ["midi"]
-    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: 5, frame_mode: false, device: "cuda"}
+    kwargs: {checkpoint_path: "${RUN_ROOT}/midi_rae_enc/checkpoints/final.ckpt", level: 5, frame_mode: false, device: "cuda"}
   # frame-level twins for POP909 (chord/root/key)
   - class: "MidiRaeJepaEmbeddingModel"
     model_id: "midirae-backup-concat-frames"
     supported_formats: ["midi"]
-    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: "concat", frame_mode: true, device: "cuda"}
+    kwargs: {checkpoint_path: "${RUN_ROOT}/midi_rae_enc/checkpoints/final.ckpt", level: "concat", frame_mode: true, device: "cuda"}
   - class: "MidiRaeJepaEmbeddingModel"
     model_id: "midirae-backup-L0-frames"
     supported_formats: ["midi"]
-    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: 0, frame_mode: true, device: "cuda"}
+    kwargs: {checkpoint_path: "${RUN_ROOT}/midi_rae_enc/checkpoints/final.ckpt", level: 0, frame_mode: true, device: "cuda"}
   - class: "MidiRaeJepaEmbeddingModel"
     model_id: "midirae-backup-L1-frames"
     supported_formats: ["midi"]
-    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: 1, frame_mode: true, device: "cuda"}
+    kwargs: {checkpoint_path: "${RUN_ROOT}/midi_rae_enc/checkpoints/final.ckpt", level: 1, frame_mode: true, device: "cuda"}
   - class: "MidiRaeJepaEmbeddingModel"
     model_id: "midirae-backup-L2-frames"
     supported_formats: ["midi"]
-    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: 2, frame_mode: true, device: "cuda"}
+    kwargs: {checkpoint_path: "${RUN_ROOT}/midi_rae_enc/checkpoints/final.ckpt", level: 2, frame_mode: true, device: "cuda"}
   - class: "MidiRaeJepaEmbeddingModel"
     model_id: "midirae-backup-L3-frames"
     supported_formats: ["midi"]
-    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: 3, frame_mode: true, device: "cuda"}
+    kwargs: {checkpoint_path: "${RUN_ROOT}/midi_rae_enc/checkpoints/final.ckpt", level: 3, frame_mode: true, device: "cuda"}
   - class: "MidiRaeJepaEmbeddingModel"
     model_id: "midirae-backup-L4-frames"
     supported_formats: ["midi"]
-    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: 4, frame_mode: true, device: "cuda"}
+    kwargs: {checkpoint_path: "${RUN_ROOT}/midi_rae_enc/checkpoints/final.ckpt", level: 4, frame_mode: true, device: "cuda"}
   - class: "MidiRaeJepaEmbeddingModel"
     model_id: "midirae-backup-L5-frames"
     supported_formats: ["midi"]
-    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: 5, frame_mode: true, device: "cuda"}
+    kwargs: {checkpoint_path: "${RUN_ROOT}/midi_rae_enc/checkpoints/final.ckpt", level: 5, frame_mode: true, device: "cuda"}
 
 datasets:
   - dataset_id: "cipi_v1"

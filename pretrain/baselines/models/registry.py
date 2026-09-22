@@ -24,11 +24,13 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-MODELS = ("jepa", "musicbert", "musetok")
+MODELS = ("jepa", "musicbert", "musetok", "midi_rae_enc", "midi_rae_dec")
 
 #: Which tokenization each model consumes.  jepa and musicbert deliberately share
-#: one Octuple cache directory, so a corpus is tokenized once for both.
-CACHE_KIND = {"jepa": "octuple", "musicbert": "octuple", "musetok": "remi"}
+#: one Octuple cache directory, so a corpus is tokenized once for both.  The two
+#: midi_rae arms share one piano-roll cache the same way.
+CACHE_KIND = {"jepa": "octuple", "musicbert": "octuple", "musetok": "remi",
+              "midi_rae_enc": "pianoroll", "midi_rae_dec": "pianoroll"}
 
 #: Conda interpreter that can run each model, as an unexpanded template: the
 #: names come from ``paths.yaml`` and the SLURM templates resolve them through
@@ -37,6 +39,8 @@ ENV_PYTHON = {
     "jepa": "${CONDA_ROOT}/envs/${JEPA_ENV}/bin/python",
     "musicbert": "${CONDA_ROOT}/envs/${MUSICBERT_ENV}/bin/python",
     "musetok": "${CONDA_ROOT}/envs/${MUSETOK_ENV}/bin/python",
+    "midi_rae_enc": "${CONDA_ROOT}/envs/${MIDI_RAE_ENV}/bin/python",
+    "midi_rae_dec": "${CONDA_ROOT}/envs/${MIDI_RAE_ENV}/bin/python",
 }
 
 
@@ -57,10 +61,19 @@ class BuiltRun:
 # tokenization caches
 # ---------------------------------------------------------------------------
 def cache_dir_for(model: str, cache_root: str, files: Sequence[str]) -> str:
-    """Deterministic cache location for ``model`` over exactly ``files``."""
-    from baselines.data.octuple_cache import fingerprint
+    """Deterministic cache location for ``model`` over exactly ``files``.
 
+    Branches on ``kind`` BEFORE importing anything, so a ``pianoroll`` model
+    (midi_rae) never touches ``baselines.data.octuple_cache`` -- which does not
+    exist in this checkout (see registry's module docstring situation: jepa /
+    musicbert / musetok's own cache modules are out of scope for this change
+    and are left exactly as missing as they were found).
+    """
     kind = CACHE_KIND[model]
+    if kind == "pianoroll":
+        from baselines.data.pianoroll_cache import fingerprint
+    else:
+        from baselines.data.octuple_cache import fingerprint
     return os.path.join(cache_root, kind, fingerprint(files, extra=kind))
 
 
@@ -81,7 +94,20 @@ def prepare_cache(model: str, files: Sequence[str], midi_dir: str, out_dir: str,
     False; every path that goes on to build a model leaves it True, so a real
     run still fails loudly and early on a missing dictionary.
     """
-    if CACHE_KIND[model] == "octuple":
+    kind = CACHE_KIND[model]
+    if kind == "pianoroll":
+        from baselines.data.pianoroll_cache import build_pianoroll_cache
+
+        data_cfg = (config or {}).setdefault("data", {})
+        return build_pianoroll_cache(
+            files, out_dir, workers=workers, force=force,
+            steps_per_beat=int(data_cfg.pop("steps_per_beat", 8)),
+            max_len=int(data_cfg.pop("max_len", 4096)),
+            shard_size=int(data_cfg.pop("shard_size", 2000)),
+            val_frac=float(data_cfg.pop("val_frac", 0.02)),
+            seed=int(data_cfg.pop("cache_seed", 42)))
+
+    if kind == "octuple":
         from baselines.data.octuple_cache import build_octuple_cache
 
         # popped, not read: data is splatted into DataModule constructors that
@@ -140,6 +166,13 @@ def load_prebuilt_cache(model: str, cache_dir: str,
     if got != kind:
         raise ValueError("cache at {} is {!r} but {} needs {!r}".format(
             cache_dir, got, model, kind))
+    if kind == "pianoroll":
+        # No per-kind import needed: the piano-roll cache's meta dict (written
+        # by build_pianoroll_cache) already has everything the sharded
+        # datamodule needs (shard_dir == cache_dir itself).
+        print("[pianoroll] prebuilt cache: {} sequences at {}".format(
+            meta.get("num_sequences"), cache_dir), flush=True)
+        return {"cached": True, "out_dir": os.path.abspath(cache_dir), **meta}
     if kind == "octuple":
         # Same pop prepare_cache() does: `dedup` is a tokenization-time option,
         # and JepaDataConfig/the MLM DataModule reject any key they do not
@@ -345,8 +378,56 @@ def _build_musetok(config: dict, cache: Dict) -> BuiltRun:
                      "train/commit_loss_step", "train/acc_step"))
 
 
+def _build_midi_rae_enc(config: dict, cache: Dict) -> BuiltRun:
+    import lightning as L
+    from lightning.pytorch import callbacks, loggers
+
+    from baselines.data.pianoroll_datamodule import PianorollTripletDataModule
+    from baselines.models.midi_rae_encoder_module import MidiRaeEncoderModule
+
+    data_cfg = dict(config.get("data", {}))
+    training_cfg = dict(config.get("training", {}))
+    dm = PianorollTripletDataModule(
+        cache["out_dir"],
+        batch_size=int(training_cfg.get("batch_size", 300)),
+        max_shift_x=int(training_cfg.get("max_shift_x", 12)),
+        max_shift_y=int(training_cfg.get("max_shift_y", 12)),
+        num_workers=training_cfg.get("num_workers", (6, 2)))
+    lit = MidiRaeEncoderModule(model=config.get("model", {}), training=training_cfg,
+                               image_size=int(data_cfg.get("image_size", 128)))
+    return BuiltRun(L, callbacks, loggers, dm, lit, "val/loss",
+                    ("train/loss_step", "train/sim_step", "train/sigreg_step",
+                     "train/mep_step"))
+
+
+def _build_midi_rae_dec(config: dict, cache: Dict) -> BuiltRun:
+    import lightning as L
+    from lightning.pytorch import callbacks, loggers
+
+    from baselines.data.pianoroll_datamodule import PianorollAnchorDataModule
+    from baselines.models.midi_rae_decoder_module import MidiRaeDecoderModule
+
+    data_cfg = dict(config.get("data", {}))
+    training_cfg = dict(config.get("training", {}))
+    encoder_ckpt = config.get("encoder_ckpt")
+    if not encoder_ckpt:
+        raise ValueError("midi_rae_dec requires top-level config key 'encoder_ckpt' "
+                         "(the Lightning checkpoint written by a midi_rae_enc run)")
+    dm = PianorollAnchorDataModule(
+        cache["out_dir"],
+        batch_size=int(training_cfg.get("dec_batch_size", 360)),
+        max_shift_y=int(training_cfg.get("max_shift_y", 12)),
+        num_workers=training_cfg.get("num_workers", (6, 4)))
+    lit = MidiRaeDecoderModule(model=config.get("model", {}), training=training_cfg,
+                               image_size=int(data_cfg.get("image_size", 128)),
+                               encoder_ckpt=encoder_ckpt)
+    return BuiltRun(L, callbacks, loggers, dm, lit, "val/loss",
+                    ("train/loss_step", "train/bce_step", "train/mse_step"))
+
+
 _BUILDERS = {"jepa": _build_jepa, "musicbert": _build_musicbert,
-             "musetok": _build_musetok}
+             "musetok": _build_musetok,
+             "midi_rae_enc": _build_midi_rae_enc, "midi_rae_dec": _build_midi_rae_dec}
 
 
 def build(model: str, config: dict, cache: Dict) -> BuiltRun:

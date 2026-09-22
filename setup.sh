@@ -69,6 +69,7 @@ create_env () {                 # $1 = env name, $2 = spec file
 }
 create_env "$JEPA_ENV"     jepa-music.yml
 create_env "$MUSETOK_ENV"  musetok.yml
+create_env "$MIDI_RAE_ENV" midi_rae.yml
 create_env "$BENCHMIR_ENV" benchmir.yml
 
 echo "== evaluation library (editable install into $BENCHMIR_ENV)"

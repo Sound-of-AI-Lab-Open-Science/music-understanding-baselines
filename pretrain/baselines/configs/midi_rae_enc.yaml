@@ -1,0 +1,112 @@
+# MIDI-RAE-JEPA Swin encoder pre-training.
+#
+# Every hyperparameter below is copied verbatim from the paper's own
+# 5-epoch "backup" recipe (drscotthawley/midi-rae,
+# configs/config_swin_full_backup.yaml) -- this is the config that produced
+# the reported results, not an approximation of it. `data.path` /
+# `encoder_ckpt` are the only two upstream keys that do not carry over
+# unchanged: this scaffold resolves the piano-roll cache itself (from
+# --midi-dir, via baselines/data/pianoroll_cache.py) instead of reading a
+# pre-built shard directory from `data.path`, and `midi_rae_dec.yaml` is the
+# one that points `encoder_ckpt` at this arm's own checkpoint output.
+#
+# Corpus: any tree of .mid/.midi files. Tokenization here means rasterizing to
+# tempo-normalized 32nd-note piano rolls (steps_per_beat=8), sharded and
+# lazily loaded (ShardedTripletDataset) exactly like the "sharded" data.format
+# branch of upstream's train_enc.py -- the only branch this port implements.
+#
+# Environment: the `midi_rae` conda env (envs/midi_rae.yml).
+# Run it as: python baselines/train.py --model midi_rae_enc \
+#     --config baselines/configs/midi_rae_enc.yaml --midi-dir <dir> [--smoke]
+#
+# Behavioral-equivalence note: the encoder training_step is a REAL port of
+# upstream's compute_batch_loss (EMA teacher, per-level LeJEPA, MEP), not a
+# call into upstream's own loop -- see midi_rae_encoder_module.py's docstring
+# for exactly what was and was not carried over (only the swin+sharded path;
+# the MAE-decoder branch is dropped since lambda_mae stays 0.0 here, as it
+# does upstream). Verified so far with a CPU smoke test only: shapes, gradient
+# flow and finite losses, NOT long-run numerical parity with the original
+# hand-written loop.
+
+seed: 42
+
+data:
+  image_size: 128
+  in_channels: 1
+
+model:
+  encoder: swin
+  patch_h: 4
+  patch_w: 4
+  embed_dim: 8
+  depths: [2, 2, 2, 6, 2, 1]
+  num_heads: [2, 2, 2, 4, 8, 16]
+  window_size: 4
+  mlp_ratio: 4.0
+  drop_path_rate: 0.1
+
+training:
+  batch_size: 300
+  lr: 1.0e-3
+  epochs: 5               # short backup/insurance run, not the main 40-epoch job
+  lambd: 0.2
+  max_shift_x: 12
+  max_shift_y: 12
+  lambda_mae: 0.0
+  mask_ratio: 0.5
+  empty_mask_ratio: 0.05
+  ema_eta: 1.0e-5
+  ema_update_every: 1
+  ema_eta_switch_epoch: 1   # switch immediately: too short a run for a meaningful warm-up phase
+  ema_eta_after: 0.96
+  ema_eta_ramp_epochs: 0    # 0 = hard jump at switch_epoch; >0 = gradual log-space ramp (local modification)
+  lr_warmup_epochs: 1
+  lr_tail_epochs: 2
+  lambda_mep: 1.0
+  lambda_visible: 1.0
+  lambda_anchor: 0.0
+  lambda_fact: 0.5
+  lambda_sim: 1.0
+  lambda_sim_curriculum_epochs: 0
+  num_workers: [6, 2]
+
+trainer:
+  max_epochs: 5
+  max_steps: -1
+  accelerator: gpu
+  devices: 1
+  precision: bf16-mixed    # Lightning-managed mixed precision, replacing upstream's
+                           # manual torch.autocast(dtype=bfloat16) around the forward+loss
+  gradient_clip_val: 1.0   # matches upstream's clip_grad_norm_(params, max_norm=1.0)
+  log_every_n_steps: 50
+  ckpt_every_n_steps: 1000
+  val_check_interval: 1.0  # once per epoch, matching upstream's per-epoch validation loop
+  limit_val_batches: 1.0
+  num_sanity_val_steps: 0
+  enable_progress_bar: false
+
+smoke:
+  # Tiny synthetic-scale proof, CPU or GPU: a handful of files, a handful of
+  # steps. Precision drops to fp32 because CPU has no bf16-mixed autocast
+  # backend worth trusting here, and the point of a smoke run is "does it run
+  # and produce finite numbers", not "does it run fast".
+  limit_files: 20
+  data:
+    image_size: 128
+    val_frac: 0.2   # 20 files * 0.02 production val_frac would round to 0 val files
+  training:
+    batch_size: 4
+    epochs: 1
+    lr_warmup_epochs: 1
+    lr_tail_epochs: 0
+    num_workers: [0, 0]
+  trainer:
+    max_epochs: 1
+    max_steps: 5
+    accelerator: cpu
+    devices: 1
+    precision: 32-true
+    log_every_n_steps: 1
+    ckpt_every_n_steps: 100
+    val_check_interval: 1.0
+    limit_val_batches: 2

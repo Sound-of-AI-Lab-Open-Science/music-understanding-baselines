@@ -4,7 +4,11 @@
 work/
 
 # Corpora are never redistributed here; DATA_ROOT points at wherever they live.
-data/
+# Anchored to the repo root: an unanchored `data/` also matched
+# pretrain/baselines/data/ (a real source package, not corpora) and silently
+# excluded it from every commit -- almost certainly why baselines/data/ was
+# never actually committed despite being imported by train.py/registry.py.
+/data/
 
 # The upstream MuseTok checkout is cloned by `setup.sh --with-musetok`, not
 # vendored: upstream publishes no licence file. See THIRD_PARTY_NOTICES.md.
