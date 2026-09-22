@@ -1,6 +1,6 @@
 # The pre-training scaffold
 
-Three pre-training baselines behind one CLI, so that adding a corpus is a path
+Five pre-training baselines behind one CLI, so that adding a corpus is a path
 and not a port:
 
 | model | objective | tokenization | environment |
@@ -8,12 +8,18 @@ and not a port:
 | `jepa` | Music-JEPA joint-embedding prediction | OctupleMIDI | `$JEPA_ENV` |
 | `musicbert` | MusicBERT masked LM | OctupleMIDI (**the same cache as `jepa`**) | `$JEPA_ENV` |
 | `musetok` | MuseTok residual-VQ reconstruction | REMI+ events | `$MUSETOK_ENV` |
+| `midi_rae_enc` | MIDI-RAE-JEPA self-supervised encoder pretraining | piano-roll shards | `$MIDI_RAE_ENV` |
+| `midi_rae_dec` | Frozen-encoder decoder, trained against a `midi_rae_enc` checkpoint | piano-roll shards (**the same cache as `midi_rae_enc`**) | `$MIDI_RAE_ENV` |
 
 ```
-python baselines/train.py --model {jepa,musicbert,musetok} \
+python baselines/train.py --model {jepa,musicbert,musetok,midi_rae_enc,midi_rae_dec} \
     --config baselines/configs/<arm>.yaml \
     --midi-dir <dir> [--filter-csv <csv>] [--max-steps N] [--smoke]
 ```
+
+`midi_rae_dec` additionally needs a top-level `encoder_ckpt` key in its config,
+pointing at the Lightning checkpoint a finished `midi_rae_enc` run wrote — see
+`configs/midi_rae_dec.yaml`.
 
 Run it from `pretrain/`, which must be on `PYTHONPATH` — `env.sh` puts it
 there — because `train.py` resolves both `baselines.*` and the `src.*` /
@@ -27,6 +33,14 @@ for an arm and submits it.
 `pretrain/scripts/preprocess_lmd.py` (config → objects, and the parity-tested Octuple
 encoder). The scaffold calls those rather than re-implementing them, so a
 recipe here and a hand-written config produce the same objects.
+
+`midi_rae_enc`/`midi_rae_dec` follow a different pattern, matching `musetok`
+rather than `jepa`/`musicbert`: there is no separately-published upstream
+script to call through. Their Lightning modules
+(`baselines/models/midi_rae_{encoder,decoder}_module.py`) and the Swin V2
+encoder/losses/EMA teacher they build on (`baselines/models/midi_rae_lib/`,
+ported from the original hand-written training loop) live entirely under
+`baselines/`, not `src/`.
 
 **Never create a directory under `baselines/` whose name collides with a
 top-level package next to it** (`scripts`, `src`, `data`, `models`, `configs`).
@@ -45,10 +59,12 @@ falling back to a different corpus.
 
 ## Which interpreter
 
-The three environments are not interchangeable. `$MUSETOK_ENV` pins
+The four environments are not interchangeable. `$MUSETOK_ENV` pins
 `miditoolkit==1.0.0` (1.0.1 changes tick handling and breaks the strict REMI+
 conversion) and `vector_quantize_pytorch`; `$JEPA_ENV` has neither and has this
-package's own `src/` dependencies. `env.sh` resolves both names to interpreters.
+package's own `src/` dependencies; `$MIDI_RAE_ENV` pins `timm` and `lpips`,
+neither of which the other three carry. `env.sh` resolves all four names to
+interpreters.
 
 ## Expected data layout
 
@@ -100,13 +116,15 @@ package's own `src/` dependencies. `env.sh` resolves both names to interpreters.
 Tokenization runs **once** per (codec, exact file list) and is reused:
 
 ```
-<cache-root>/octuple/<N>-<hash>/   index.json + tokens_NNNNN.npy + failures.txt
-<cache-root>/remi/<N>-<hash>/      events/<piece>.pkl + index.json + failures.txt
+<cache-root>/octuple/<N>-<hash>/    index.json + tokens_NNNNN.npy + failures.txt
+<cache-root>/remi/<N>-<hash>/       events/<piece>.pkl + index.json + failures.txt
+<cache-root>/pianoroll/<N>-<hash>/  index.json + {train,val}_shardNNNNN.pt(+.idx.json) + failures.txt
 ```
 
 The hash covers the filtered file list, so changing the filter builds a new
 cache and leaves the old one intact. `jepa` and `musicbert` land in the *same*
-Octuple directory — tokenize once, train both.
+Octuple directory — tokenize once, train both. `midi_rae_enc` and
+`midi_rae_dec` likewise share one piano-roll directory.
 
 Per-file failures are logged and skipped, never fatal: a run prints a
 `skip reasons` histogram and writes one `reason<TAB>path` line per dropped file
@@ -156,6 +174,9 @@ Explicit splits at train time:
   Octuple sequences by id after the DataModule is built, so `min_notes` and the
   `data.fraction` ablation still apply. Nothing in `src/` changes.
 * **MusicBERT** — its DataModule owns its own split.
+* **midi_rae_enc/midi_rae_dec** — do not use `--split-dir`; the train/val split
+  is a seeded fraction (`val_frac`, default 0.02) baked in at cache-build time
+  by `pianoroll_cache.py` itself, not re-partitioned per arm afterwards.
 
 Without those keys every model falls back to the seeded `val_fraction` shuffle,
 which mixes the split's validation songs into train.
@@ -203,3 +224,15 @@ templates pass `--resume`, which picks up `checkpoints/last.ckpt`.
 * **Upstream MuseTok code is imported, not vendored** — see
   `THIRD_PARTY_NOTICES.md`. Moving or editing that checkout changes behaviour
   here.
+* **`midi_rae_enc`/`midi_rae_dec` are verified by a CPU smoke test only.**
+  Both arms run end to end with finite losses and the decoder correctly loads
+  the encoder's checkpoint (0 missing/unexpected keys), but that does not
+  establish numerical parity with the original hand-written training loop
+  (`ema_eta` ramp, per-level LeJEPA + MEP loss, factorization loss) it was
+  ported from. Treat a first real GPU run as a fresh check, not a known-good
+  rerun.
+* **`jepa`/`musicbert`/`musetok` depend on `baselines/data/octuple_cache.py`,
+  `remi_cache.py` and `baselines/data/musetok_datamodule.py`, which are absent
+  from this checkout** — a pre-existing gap unrelated to the midi_rae arms
+  above it. `midi_rae_enc`/`midi_rae_dec` do not depend on any of the three and
+  are unaffected; the other arms will not run until those files are restored.
