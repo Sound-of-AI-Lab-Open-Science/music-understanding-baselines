@@ -30,16 +30,19 @@ else this package depends on but does not redistribute.
 
 * A Linux cluster with **SLURM**. Every long step is submitted as a job; the
   templates in `slurm/` carry no site-specific flags and read `env.sh`.
-* **conda** (any distribution), and disk for three environments. They exist
-  because their torch builds are mutually exclusive — see *Why three
+* **conda** (any distribution), and disk for four environments. They exist
+  because their torch builds are mutually exclusive — see *Why four
   environments* below.
 * **One GPU** per pre-training arm. Everything after pre-training is CPU work.
   The MuseTok arm is the one with a floor: at its recipe's micro-batch 16 over
   `dec_seqlen` 1280 it needs **more than 16 GB** — measured, it fills a 15 GB
   card and dies — so pin it with `JR_SLURM_GRES` / `JR_SLURM_EXCLUDE`, or halve
   `data.batch_size` and double `trainer.accumulate_grad_batches` in
-  `musetok.yaml`, which leaves the effective batch at 64. The three other arms
-  fit a 15 GB card as they stand.
+  `musetok.yaml`, which leaves the effective batch at 64. `jepa_paper`,
+  `jepa_champA` and `musicbert` fit a 15 GB card as they stand. `midi_rae_enc`/
+  `midi_rae_dec` are lighter still — upstream reports them running on consumer
+  cards down to an RTX 2070 — but that integration has only been verified with
+  a CPU smoke test so far, not a real GPU run; see *Known limitations*.
 * Storage: roughly 80 GB of token caches for a 1.7 M-file corpus, plus the
   checkpoints. The union caches are symlinks and cost almost nothing.
 * The corpora, which are **not** included. `./check_data.sh` tells you exactly
@@ -54,7 +57,7 @@ else this package depends on but does not redistribute.
 ├── env.sh                  source this; it is the only place a path is decided
 ├── paths.yaml              the defaults env.sh and pkgpaths.py both read
 ├── pkgpaths.py             the same resolution, for Python
-├── setup.sh                submodule + three conda envs + editable install
+├── setup.sh                submodule + four conda envs + editable install
 ├── check_data.sh           verify the corpora layout before submitting anything
 ├── run_tokenize.sh         1. tokenize the corpus            (SLURM array)
 ├── run_union.sh            2. split, union caches, vocabulary (foreground)
@@ -68,21 +71,26 @@ else this package depends on but does not redistribute.
 ├── lib/smoke_corpus.py     cuts the tiny corpora --end-to-end runs on
 ├── slurm/                  five generic templates: tokenize, pretrain,
 │                           snapshot, encode, eval
-├── envs/                   the three environments, as exported specs
+├── envs/                   the four environments, as exported specs
 ├── pretrain/
 │   ├── src/                the model package: jepa.py, musicbert.py, the
 │   │                       Octuple codec, VICReg, EMA, relative attention
 │   ├── baselines/          the training scaffold behind one CLI
 │   │   ├── train.py        discover -> filter -> cache -> build -> fit
-│   │   ├── configs/        the four recipes, one per arm
+│   │   ├── configs/        the six recipes, one per arm
 │   │   ├── cache_tools/    union merge, vocabulary, keep-list
-│   │   ├── data/           Octuple and REMI+ caches, datamodules
-│   │   └── models/         the registry that wires config -> Lightning module
+│   │   ├── data/           Octuple, REMI+ and piano-roll caches, datamodules
+│   │   └── models/         the registry that wires config -> Lightning module;
+│   │                       midi_rae_lib/ holds midi_rae_enc/dec's ported
+│   │                       Swin V2 encoder, losses and EMA teacher
 │   └── scripts/            make_musescore_split.py (the content-hash split) and
 │                           the three model drivers train.py builds through:
 │                           train_jepa.py, train_mlm.py, preprocess_lmd.py
 ├── eval/benchmir/
-│   ├── configs/            the evaluation recipes (models x datasets x tasks)
+│   ├── configs/            the evaluation recipes (models x datasets x tasks),
+│   │                       including midirae_backup_eval_v1.yaml
+│   ├── patches/            local BenchMIR fixes midi_rae's eval config needs
+│   │                       (not yet upstreamed — see eval/benchmir/README.md)
 │   ├── scripts_ours/       job generators, the cache-warming driver, report makers
 │   └── scripts_topmagd/    the three-split-strategy genre study
 └── third_party/
@@ -101,7 +109,7 @@ git clone <this repository>      # plain clone; see the note below
 cd <this repository>
 
 source env.sh            # defines PKG_ROOT and every other path
-./setup.sh               # submodule, three conda envs, editable install
+./setup.sh               # submodule, four conda envs, editable install
 ./check_data.sh          # says what is missing, and where it was looked for
 ./run_smoke.sh           # proves the environments and every recipe resolve
 ```
@@ -144,12 +152,14 @@ all, so the package runs on a cluster with no partition policy without edits.
 Defaults live in `paths.yaml`; an exported variable always wins, so relocating
 the package never requires editing a file.
 
-### Why three environments
+### Why four environments
 
 Not tidiness — **their torch builds are mutually exclusive**. The MuseTok
 checkpoints need `miditoolkit==1.0.0` (1.0.1 changed tick handling and silently
-produces a different REMI+ encoding from the same MIDI), and the evaluation
-library pins a torch with no CUDA wheel for many drivers. So each model adapter
+produces a different REMI+ encoding from the same MIDI), the evaluation
+library pins a torch with no CUDA wheel for many drivers, and `midi_rae_enc`/
+`midi_rae_dec` need `timm` and `lpips`, neither of which the other three pin.
+So each model adapter
 runs its model in a **subprocess** under its own interpreter and talks to it
 over a framed stdin/stdout protocol. That is also why the probe jobs are CPU
 jobs and why embedding extraction is pushed out into the two GPU-capable
@@ -234,6 +244,10 @@ variants sharing one directory overwrite each other's piece lists.
 ./run_pretrain.sh jepa_champA
 ./run_pretrain.sh musetok
 ./run_pretrain.sh musicbert
+./run_pretrain.sh midi_rae_enc           # self-supervised encoder pretraining
+./run_pretrain.sh midi_rae_dec           # frozen-encoder decoder; needs midi_rae_enc's
+                                          # checkpoint path in midi_rae_dec.yaml's
+                                          # top-level encoder_ckpt key
 ./run_pretrain.sh jepa_paper --smoke     # 20 files, 200 steps, same batch shape
 ```
 
@@ -350,8 +364,8 @@ the wrong corpus.
 **`--end-to-end` is the one to run before a campaign.** It cuts itself a
 hundred-file pre-training corpus and a forty-movement CIPI corpus out of
 whatever `$MIDI_DIR` and `$BENCHMIR_DATA_ROOT` point at, then runs *every stage
-through the entry points above* — tokenize (both codecs) → union → pre-train all
-four arms → snapshot → encode → probe → report — waiting for each SLURM stage
+through the entry points above* — tokenize (both codecs) → union → pre-train
+every arm in `$JR_ARMS` → snapshot → encode → probe → report — waiting for each SLURM stage
 before starting the next, and prints what each cost:
 
 ```
@@ -422,18 +436,25 @@ Read these before quoting any number this package produces.
   submodule URL is not reachable for you, request access. The pre-training half
   of this package runs without it.
 * **MuseTok cannot run without upstream's checkout**, which has no licence file
-  and so is cloned by an opt-in flag rather than vendored. The other three arms
-  are unaffected.
+  and so is cloned by an opt-in flag rather than vendored. The other arms
+  (`jepa_paper`, `jepa_champA`, `musicbert`, `midi_rae_enc`, `midi_rae_dec`) are
+  unaffected.
 * **Our MuseTok checkpoints are not interchangeable with the public weights** —
   different vocabulary, shifted token ids.
 * **A file the encoder refuses becomes a zero embedding row, not a dropped
   row.** It is a small fraction and it is not distributed evenly across arms, so
   a model that refuses more files is penalised twice.
-* **Epoch budgets differ per arm by construction.** The JEPA arms are
-  epoch-based; MuseTok and MusicBERT are step-based, so a smaller corpus raises
-  their epoch counts. Rescaling MusicBERT means moving `trainer.max_steps`,
-  `optim.total_num_update` **and** `optim.warmup_updates` together — move one
-  and the learning-rate curve is discontinuous.
+* **Epoch budgets differ per arm by construction.** The JEPA and midi_rae arms
+  are epoch-based; MuseTok and MusicBERT are step-based, so a smaller corpus
+  raises their epoch counts. Rescaling MusicBERT means moving
+  `trainer.max_steps`, `optim.total_num_update` **and** `optim.warmup_updates`
+  together — move one and the learning-rate curve is discontinuous.
+* **`midi_rae_enc`/`midi_rae_dec` are verified by a CPU smoke test only** — both
+  arms run end to end with finite losses and the decoder correctly loads the
+  encoder's checkpoint (0 missing/unexpected keys), but that does not establish
+  numerical parity with the original hand-written training loop it was ported
+  from. Treat a first real run as a fresh check, not a known-good rerun, until
+  it's been compared against the original script on the same data/seed.
 * **POP909 chord/root exist in two versions** — a 30-song historical slice and
   all 909 songs. They are ~18 k and ~550 k rows of the same probe. Never compare
   one with the other.
