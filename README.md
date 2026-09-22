@@ -5,8 +5,7 @@ architecture for symbolic music — together with two baselines pre-trained on t
 same corpus, the same split and the same budget, and evaluated on the same
 probes.
 
-Three models are pre-trained here through one shared CLI (four arms in total),
-plus one standalone arm with its own pipeline:
+Four models are pre-trained here, all through one shared CLI (six arms in total):
 
 | arm | model | tokenization | what it is for |
 |---|---|---|---|
@@ -14,7 +13,8 @@ plus one standalone arm with its own pipeline:
 | `jepa_champA` | Music-JEPA | OctupleMIDI | a smaller, more strongly regularised control — a JEPA can reach a low loss while its representation collapses, and one run cannot tell you which happened |
 | `musetok` | MuseTok | REMI+ | residual-VQ tokenizer, retrained with a corpus-derived vocabulary |
 | `musicbert` | MusicBERT | OctupleMIDI | masked-LM baseline on the official recipe's epoch budget |
-| [`midi_rae`](pretrain/midi_rae/README.md) | MIDI-RAE-JEPA | piano-roll images | hierarchical Swin V2 + JEPA on piano-roll images, not token sequences. Standalone: its own Hydra configs and `train_enc`/`train_dec` entrypoints, not `pretrain/baselines/train.py` — see its own README. |
+| `midi_rae_enc` | MIDI-RAE-JEPA (encoder) | piano-roll images | hierarchical Swin V2 + JEPA self-supervised pretraining on piano-roll images, not token sequences |
+| `midi_rae_dec` | MIDI-RAE-JEPA (decoder) | piano-roll images | frozen-encoder decoder trained on `midi_rae_enc`'s checkpoint (RAE-style, not paired with pretraining) |
 
 They are then frozen and probed on symbolic-MIR tasks — piano difficulty,
 emotion, genre, chord, chord root, key, composer — through an external
