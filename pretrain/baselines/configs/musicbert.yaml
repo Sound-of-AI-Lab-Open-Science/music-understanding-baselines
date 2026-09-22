@@ -1,0 +1,87 @@
+# MusicBERT base masked-LM pre-training, on the same OctupleMIDI union cache and
+# the same content-hash song split as the two Music-JEPA arms.
+#
+# Schedule: the official recipe is 125k updates at effective batch 256, which is
+# 22.9 epochs of the unfiltered corpus. The numbers below hold that EPOCH budget
+# on the filtered corpus (890,682 training sequences), which is 80,000 updates
+# with warmup kept at 20%.
+#
+# Rescaling this arm means moving trainer.max_steps, optim.total_num_update AND
+# optim.warmup_updates together. Move one and the LR curve is discontinuous --
+# the polynomial decay is defined by total_num_update, not by max_steps.
+#
+# Environment: the `jepa-music` conda env (envs/jepa-music.yml).
+# Run it as: run_pretrain.sh musicbert [--smoke]
+
+seed: 1
+
+data:
+  filter:
+    id_column: null
+    match: id              # MuseScore-big-MIDI files are <id>.mxl.mid
+    keep_columns: []
+    drop_columns: []
+    require_listed: true
+  dedup: false
+
+  batch_size: 4                   # per-step micro-batch
+  train_ids_file: ${SPLIT_DIR}/ids_train.txt
+  val_ids_file: ${SPLIT_DIR}/ids_val.txt
+  max_octuples: 1024              # = tokens_per_sample 8192 / 8
+  strategy: bar                   # official bar-level masking
+  mask_prob: 0.15
+  random_token_prob: 0.1
+  leave_unmasked_prob: 0.1
+  num_workers: 4
+  val_fraction: 0.005
+  val_max_samples: 512
+  pin_memory: true
+
+model:
+  arch: base                      # 12 layers / 768 dim / 3072 ffn / 12 heads
+
+optim:
+  peak_lr: 5.0e-4
+  warmup_updates: 16000
+  total_num_update: 80000
+  end_learning_rate: 0.0
+  power: 1.0
+  adam_betas: [0.9, 0.98]
+  adam_eps: 1.0e-6
+  weight_decay: 0.01
+  init_from: null                 # set to a converted ckpt to continue training
+
+trainer:
+  max_steps: 80000
+  accumulate_grad_batches: 64     # 4 x 64 = 256 effective batch (matches official)
+  precision: bf16-mixed
+  gradient_clip_val: 0.0
+  accelerator: gpu
+  devices: 1
+  log_every_n_steps: 100
+  ckpt_every_n_steps: 1000
+  val_check_interval: 2000
+  num_sanity_val_steps: 0
+  enable_progress_bar: false
+
+smoke:
+  limit_files: 20
+  data:
+    batch_size: 2
+    max_octuples: 128
+    num_workers: 0
+    val_fraction: 0.2
+    val_max_samples: 4
+    pin_memory: false
+  optim:
+    warmup_updates: 5
+    total_num_update: 20
+  trainer:
+    max_steps: 20
+    accumulate_grad_batches: 1
+    precision: 32-true
+    accelerator: auto
+    log_every_n_steps: 5
+    ckpt_every_n_steps: 10
+    val_check_interval: 1.0
+    limit_val_batches: 2

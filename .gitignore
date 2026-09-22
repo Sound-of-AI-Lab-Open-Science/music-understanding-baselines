@@ -1,0 +1,22 @@
+# Everything this package writes is rebuildable from the corpora and the
+# recipes, and none of it is small: token caches, embedding caches, checkpoints,
+# job logs and generated job configs all live under $WORK_ROOT.
+work/
+
+# Corpora are never redistributed here; DATA_ROOT points at wherever they live.
+data/
+
+# The upstream MuseTok checkout is cloned by `setup.sh --with-musetok`, not
+# vendored: upstream publishes no licence file. See THIRD_PARTY_NOTICES.md.
+third_party/MuseTok/
+
+__pycache__/
+*.py[cod]
+
+# Last-resort fallbacks: if neither env.sh nor pkgpaths.py has resolved
+# $CACHE_ROOT / $RUN_ROOT / $DATA_ROOT, the entry points write here instead of
+# under $WORK_ROOT. Ignored so a stray run cannot dirty `git status`.
+pretrain/baselines/cache/
+pretrain/baselines/runs/
+pretrain/runs/
+pretrain/data/
