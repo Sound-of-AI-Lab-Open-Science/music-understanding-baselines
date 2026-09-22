@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "midi-rae"
+dynamic = ["version"]
+description = ""
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+license = {text = "Apache-2.0"}
+authors = [{name = "Solveit", email = "nobody@fast.ai"}]
+keywords = ['nbdev']
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+]
+dependencies = [
+    "torch",
+    "numpy",
+    "pillow",
+    "wandb",
+    "hydra-core",
+    "tqdm",
+    "matplotlib",
+    "plotly",
+    "timm",
+    "scikit-learn",
+    "lpips",
+]
+
+[project.urls]
+Repository = "https://github.com/drscotthawley/midi-rae"
+Documentation = "https://drscotthawley.github.io/midi-rae/"
+
+[project.entry-points.nbdev]
+midi_rae = "midi_rae._modidx:d"
+
+[tool.setuptools.dynamic]
+version = {attr = "midi_rae.__version__"}
+
+[tool.setuptools.packages.find]
+include = ["midi_rae"]
+
+[tool.nbdev]

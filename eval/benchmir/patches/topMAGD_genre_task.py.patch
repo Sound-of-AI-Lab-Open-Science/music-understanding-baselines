@@ -1,0 +1,14 @@
+diff --git a/src/benchmir/eval/tasks/corpora/topMAGD_genre_task.py b/src/benchmir/eval/tasks/corpora/topMAGD_genre_task.py
+index fe1c2a0..7be3d9e 100644
+--- a/src/benchmir/eval/tasks/corpora/topMAGD_genre_task.py
++++ b/src/benchmir/eval/tasks/corpora/topMAGD_genre_task.py
+@@ -46,4 +46,8 @@ class MSDTopMAGDGenreClassificationDownstreamEvalTask(
+             torch.tensor(label_indices), minlength=self.num_outputs
+         ).float()
+         weights = 1.0 / counts.clamp(min=1)
+-        return nn.CrossEntropyLoss(weight=weights)
++        # GradientProbe defaults to cuda when available (base.py), independent of
++        # this task's own device -- match that here or CrossEntropyLoss's weight
++        # tensor ends up on cpu while predictions/labels are on cuda.
++        device = "cuda" if torch.cuda.is_available() else "cpu"
++        return nn.CrossEntropyLoss(weight=weights.to(device))

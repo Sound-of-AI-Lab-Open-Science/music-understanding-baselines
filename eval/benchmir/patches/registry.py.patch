@@ -1,0 +1,15 @@
+diff --git a/src/benchmir/models/registry.py b/src/benchmir/models/registry.py
+index c0cca57..d5593c3 100644
+--- a/src/benchmir/models/registry.py
++++ b/src/benchmir/models/registry.py
+@@ -11,8 +11,10 @@ from __future__ import annotations
+ from .base import Model
+ from .dummy_frame import DummyFrameEmbeddingModel
+ from .midi_aria import AriaEmbeddingModel
++from .midi_rae_jepa import MidiRaeJepaEmbeddingModel
+ 
+ MODEL_REGISTRY: dict[str, type[Model]] = {
+     "AriaEmbeddingModel": AriaEmbeddingModel,
+     "DummyFrameEmbeddingModel": DummyFrameEmbeddingModel,
++    "MidiRaeJepaEmbeddingModel": MidiRaeJepaEmbeddingModel,
+ }

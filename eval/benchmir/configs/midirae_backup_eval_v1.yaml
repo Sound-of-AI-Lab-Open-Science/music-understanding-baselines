@@ -1,0 +1,183 @@
+run:
+  run_id: "midirae_backup_eval_v1"
+  seed: 42
+  output_dir: "./runs/midirae_backup_eval_v1"
+
+# One model entry per (hierarchy level, song-level vs frame-level) combination
+# we want compared. "concat" mean-pools+concats all 6 levels; 0-5 are the
+# individual levels (0=coarsest L0 .. 5=finest L5). Song-level entries feed
+# CIPI/EMOPIA/TopMAGD/Humdrum; frame-level entries (suffix "-frames") feed
+# the three POP909 tasks.
+model:
+  - class: "MidiRaeJepaEmbeddingModel"
+    model_id: "midirae-backup-concat"
+    supported_formats: ["midi"]
+    kwargs:
+      checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt"
+      level: "concat"
+      frame_mode: false
+      device: "cuda"
+  - class: "MidiRaeJepaEmbeddingModel"
+    model_id: "midirae-backup-L0"
+    supported_formats: ["midi"]
+    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: 0, frame_mode: false, device: "cuda"}
+  - class: "MidiRaeJepaEmbeddingModel"
+    model_id: "midirae-backup-L1"
+    supported_formats: ["midi"]
+    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: 1, frame_mode: false, device: "cuda"}
+  - class: "MidiRaeJepaEmbeddingModel"
+    model_id: "midirae-backup-L2"
+    supported_formats: ["midi"]
+    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: 2, frame_mode: false, device: "cuda"}
+  - class: "MidiRaeJepaEmbeddingModel"
+    model_id: "midirae-backup-L3"
+    supported_formats: ["midi"]
+    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: 3, frame_mode: false, device: "cuda"}
+  - class: "MidiRaeJepaEmbeddingModel"
+    model_id: "midirae-backup-L4"
+    supported_formats: ["midi"]
+    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: 4, frame_mode: false, device: "cuda"}
+  - class: "MidiRaeJepaEmbeddingModel"
+    model_id: "midirae-backup-L5"
+    supported_formats: ["midi"]
+    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: 5, frame_mode: false, device: "cuda"}
+  # frame-level twins for POP909 (chord/root/key)
+  - class: "MidiRaeJepaEmbeddingModel"
+    model_id: "midirae-backup-concat-frames"
+    supported_formats: ["midi"]
+    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: "concat", frame_mode: true, device: "cuda"}
+  - class: "MidiRaeJepaEmbeddingModel"
+    model_id: "midirae-backup-L0-frames"
+    supported_formats: ["midi"]
+    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: 0, frame_mode: true, device: "cuda"}
+  - class: "MidiRaeJepaEmbeddingModel"
+    model_id: "midirae-backup-L1-frames"
+    supported_formats: ["midi"]
+    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: 1, frame_mode: true, device: "cuda"}
+  - class: "MidiRaeJepaEmbeddingModel"
+    model_id: "midirae-backup-L2-frames"
+    supported_formats: ["midi"]
+    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: 2, frame_mode: true, device: "cuda"}
+  - class: "MidiRaeJepaEmbeddingModel"
+    model_id: "midirae-backup-L3-frames"
+    supported_formats: ["midi"]
+    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: 3, frame_mode: true, device: "cuda"}
+  - class: "MidiRaeJepaEmbeddingModel"
+    model_id: "midirae-backup-L4-frames"
+    supported_formats: ["midi"]
+    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: 4, frame_mode: true, device: "cuda"}
+  - class: "MidiRaeJepaEmbeddingModel"
+    model_id: "midirae-backup-L5-frames"
+    supported_formats: ["midi"]
+    kwargs: {checkpoint_path: "/home/abahuguna/soundofai/midi-rae/checkpoints/SwinEncoder_musescore-big-backup_best.pt", level: 5, frame_mode: true, device: "cuda"}
+
+datasets:
+  - dataset_id: "cipi_v1"
+    class: "CIPIDifficultyEstimationEvalDataset"
+    root_dir: "experiments/data/raw/cipi/"
+    kwargs:
+      target_class: "henle"
+      symbolic_format: "midi"
+
+  - dataset_id: "emopia_v1"
+    class: "EMOPIAEmotionClassificationEvalDataset"
+    root_dir: "experiments/data/raw/emopia/"
+    puller: "EMOPIAZenodoPuller"
+    kwargs:
+      target_class: "4Q"
+
+  - dataset_id: "topmagd_v1"
+    class: "MSDTopMAGDGenreClassificationEvalDataset"
+    root_dir: "experiments/data/raw/LMDMatched/"
+    kwargs:
+      use_all_matches: false
+      n_folds: 5
+      val_ratio: 0.15
+
+  - dataset_id: "humdrum_v1"
+    class: "HumdrumComposerClassificationEvalDataset"
+    root_dir: "experiments/data/raw/humdrum/"
+    kwargs:
+      target_class: "composer"
+      symbolic_format: "midi"
+
+  - dataset_id: "pop909-chord"
+    class: "POP909ChordEstimationEvalDataset"
+    root_dir: "experiments/data/raw/POP909cl/"
+    kwargs: {n_folds: 5, val_ratio: 0.15}
+
+  - dataset_id: "pop909-root"
+    class: "POP909RootEstimationEvalDataset"
+    root_dir: "experiments/data/raw/POP909cl/"
+    kwargs: {n_folds: 5, val_ratio: 0.15}
+
+  - dataset_id: "pop909-key"
+    class: "POP909KeyEstimationEvalDataset"
+    root_dir: "experiments/data/raw/POP909cl/"
+    kwargs: {n_folds: 5, val_ratio: 0.15}
+
+eval_tasks:
+  - task_id: "cipi"
+    class: "CIPIDifficultyProbeTask"
+    dataset_id: "cipi_v1"
+    model_ids: ["midirae-backup-concat","midirae-backup-L0","midirae-backup-L1","midirae-backup-L2","midirae-backup-L3","midirae-backup-L4","midirae-backup-L5"]
+    folds: "all"
+    metrics: ["accuracy"]
+    probe: {type: "mlp", hidden_dims: [256,256], dropout: 0.2}
+    training: {optimizer: "adam", learning_rate: 0.001, batch_size: 64, max_epochs: 50}
+
+  - task_id: "emopia"
+    class: "EMOPIASentimentRecognitionDownstreamEvalTask"
+    dataset_id: "emopia_v1"
+    model_ids: ["midirae-backup-concat","midirae-backup-L0","midirae-backup-L1","midirae-backup-L2","midirae-backup-L3","midirae-backup-L4","midirae-backup-L5"]
+    metrics: ["accuracy"]
+    probe: {type: "linear"}
+    training: {optimizer: "adam", learning_rate: 0.001, batch_size: 64, max_epochs: 50}
+
+  - task_id: "topmagd"
+    class: "MSDTopMAGDGenreClassificationDownstreamEvalTask"
+    dataset_id: "topmagd_v1"
+    model_ids: ["midirae-backup-concat","midirae-backup-L0","midirae-backup-L1","midirae-backup-L2","midirae-backup-L3","midirae-backup-L4","midirae-backup-L5"]
+    folds: "all"
+    metrics: ["accuracy"]
+    probe: {type: "mlp", hidden_dims: [256,256], dropout: 0.2}
+    training: {optimizer: "adam", learning_rate: 0.001, batch_size: 64, max_epochs: 50}
+
+  - task_id: "humdrum"
+    class: "HumdrumComposerClassificationDownstreamEvalTask"
+    dataset_id: "humdrum_v1"
+    model_ids: ["midirae-backup-concat","midirae-backup-L0","midirae-backup-L1","midirae-backup-L2","midirae-backup-L3","midirae-backup-L4","midirae-backup-L5"]
+    folds: "all"
+    metrics: ["accuracy", "balanced_accuracy", "weighted_f1", "macro_f1"]
+    probe: {type: "mlp", hidden_dims: [256,256], dropout: 0.2}
+    training: {optimizer: "adam", learning_rate: 0.001, batch_size: 64, max_epochs: 50}
+
+  - task_id: "pop909_chord"
+    class: "POP909ChordEstimationDownstreamEvalTask"
+    dataset_id: "pop909-chord"
+    model_ids: ["midirae-backup-concat-frames","midirae-backup-L0-frames","midirae-backup-L1-frames","midirae-backup-L2-frames","midirae-backup-L3-frames","midirae-backup-L4-frames","midirae-backup-L5-frames"]
+    folds: "all"
+    metrics: ["accuracy"]
+    probe: {type: "mlp", hidden_dims: [256,256], dropout: 0.2}
+    training: {optimizer: "adam", learning_rate: 0.001, batch_size: 64, max_epochs: 50}
+
+  - task_id: "pop909_root"
+    class: "POP909RootEstimationDownstreamEvalTask"
+    dataset_id: "pop909-root"
+    model_ids: ["midirae-backup-concat-frames","midirae-backup-L0-frames","midirae-backup-L1-frames","midirae-backup-L2-frames","midirae-backup-L3-frames","midirae-backup-L4-frames","midirae-backup-L5-frames"]
+    folds: "all"
+    metrics: ["accuracy", "chord_root"]
+    probe: {type: "mlp", hidden_dims: [256,256], dropout: 0.2}
+    training: {optimizer: "adam", learning_rate: 0.001, batch_size: 64, max_epochs: 50}
+
+  - task_id: "pop909_key"
+    class: "POP909KeyEstimationDownstreamEvalTask"
+    dataset_id: "pop909-key"
+    model_ids: ["midirae-backup-concat-frames","midirae-backup-L0-frames","midirae-backup-L1-frames","midirae-backup-L2-frames","midirae-backup-L3-frames","midirae-backup-L4-frames","midirae-backup-L5-frames"]
+    folds: "all"
+    metrics: ["accuracy", "key_weighted_score"]
+    probe: {type: "mlp", hidden_dims: [256,256], dropout: 0.2}
+    training: {optimizer: "adam", learning_rate: 0.001, batch_size: 64, max_epochs: 50}
+
+report:
+  format: "json"

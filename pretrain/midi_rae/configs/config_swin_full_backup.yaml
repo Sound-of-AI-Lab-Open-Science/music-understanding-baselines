@@ -1,0 +1,61 @@
+data:
+  path: /gpfs/home/abahuguna/soundofai/midi-rae/data/pianorolls
+  format: sharded
+  image_size: 128
+  in_channels: 1
+
+model:
+  encoder: swin
+  patch_h: 4
+  patch_w: 4
+  embed_dim: 8
+  depths: [2, 2, 2, 6, 2, 1]
+  num_heads: [2, 2, 2, 4, 8, 16]
+  window_size: 4
+  mlp_ratio: 4.0
+  drop_path_rate: 0.1
+  dec_depths: [4, 4, 4, 6, 2, 1]
+  dec_num_heads: [2, 2, 2, 4, 8, 16]
+
+training:
+  batch_size: 300
+  lr: 1e-3
+  epochs: 5               # short backup/insurance run, not the main 40-epoch job
+  lambd: 0.2
+  max_shift_x: 12
+  max_shift_y: 12
+  lambda_mae: 0.0
+  mask_ratio: 0.5
+  empty_mask_ratio: 0.05
+  ema_eta: 1e-5
+  ema_update_every: 1
+  ema_eta_switch_epoch: 1   # switch immediately: too short a run for a meaningful warm-up phase
+  ema_eta_after: 0.96
+  lr_warmup_epochs: 1
+  lr_tail_epochs: 2
+  lambda_mep: 1.0
+  lambda_visible: 1.0
+  lambda_anchor: 0.0
+  lambda_fact: 0.5
+  lambda_sim: 1.0
+  lambda_sim_curriculum_epochs: 0
+  num_workers: [6, 2]
+  save_every: 1            # save every epoch given how short this run is
+
+  dec_batch_size: 360
+  dec_epochs: 5
+  dec_lr: 2e-3
+  pos_weight: 2.5
+  gan_warmup: 100000
+  enc_ft_lr: -1
+
+preencode:
+  output_dir: /gpfs/home/abahuguna/soundofai/midi-rae/data/preencoded
+  num_passes: 10
+
+wandb:
+  project: midi-rae-jepa-musescore-big
+
+encoder_ckpt: checkpoints/SwinEncoder_musescore-big-backup_best.pt
+
+tag: musescore-big-backup
