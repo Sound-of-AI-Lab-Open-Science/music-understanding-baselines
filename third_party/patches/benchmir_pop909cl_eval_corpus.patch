@@ -1,0 +1,114 @@
+The patched file belongs to BenchMIR (Broto Clemente) and is MIT licensed. The
+lines shown as context below are therefore BenchMIR's, not this package's; the
+licence is reproduced in full at `third_party/licenses/BenchMIR-LICENSE`.
+
+This patch is documentation, not a build step: the change is already present on
+the pinned `third_party/BenchMIR` submodule branch, and nothing applies this
+file. It makes the hard-coded 30-song POP909 slice configurable
+(`kwargs: {max_songs: all}`), with the default left at 30 so previously
+published chord/root numbers stay reproducible. See THIRD_PARTY_NOTICES.md.
+
+diff --git a/src/benchmir/eval/datasets/corpora/pop909cl_eval_corpus.py b/src/benchmir/eval/datasets/corpora/pop909cl_eval_corpus.py
+index 0bdaa26..53f9e63 100644
+--- a/src/benchmir/eval/datasets/corpora/pop909cl_eval_corpus.py
++++ b/src/benchmir/eval/datasets/corpora/pop909cl_eval_corpus.py
+@@ -2,6 +2,7 @@ from __future__ import annotations
+ 
+ import copy
+ import json
++import os
+ from collections.abc import Sequence
+ from pathlib import Path
+ from typing import Any, cast
+@@ -16,6 +17,29 @@ from ..segment_single_label import SegmentLabelingEvalDataset
+ from ..support import SupportsFolds
+ 
+ 
++#: How many POP909 songs the chord/root corpora index. The original code ended
++#: ``_build_index`` in a hardcoded ``[:30]``; that stays the default so existing
++#: results remain reproducible, but it is now overridable per dataset
++#: (``kwargs: {max_songs: all}``) or globally
++#: (``BENCHMIR_POP909_MAX_SONGS=all``). ``all``/``0``/``-1``/``none`` mean "no
++#: limit" (all 909 songs). Key estimation never had the slice and is unaffected.
++DEFAULT_POP909_MAX_SONGS = 30
++
++
++def resolve_max_songs(max_songs: int | str | None = None) -> int | None:
++    """Explicit kwarg wins, then $BENCHMIR_POP909_MAX_SONGS, then the default."""
++    value: int | str | None = max_songs
++    if value is None:
++        value = os.environ.get("BENCHMIR_POP909_MAX_SONGS")
++    if value is None:
++        return DEFAULT_POP909_MAX_SONGS
++    if isinstance(value, str):
++        if value.strip().lower() in {"all", "none", ""}:
++            return None
++        value = int(value)
++    return None if value <= 0 else value
++
++
+ class POP909Base:
+     symbolic_format = "midi"  # there is no other option
+     _index: list[tuple[Path, list[tuple[float, float, str]]]]
+@@ -104,7 +128,12 @@ class POP909Base:
+         self, n_folds: int = 5, val_ratio: float = 0.15, random_state: int = 42
+     ) -> dict[str, dict[str, list[str]]]:
+         rng = np.random.default_rng(random_state)
+-        song_ids = self._song_ids()
++        # Deliberately NOT self._song_ids(): fold assignment is computed over
++        # the FULL corpus, so a capped (30-song) run's folds are a subset of
++        # the full run's rather than a different partition. The on-disk
++        # splits.json this writes was generated that way (909 song ids), and
++        # every pop909_chord/root/key result so far is against it.
++        song_ids = sorted(p.name for p in self.root_dir.iterdir() if p.is_dir())
+         rng.shuffle(song_ids)
+ 
+         fold_positions = np.array_split(np.arange(len(song_ids)), n_folds)
+@@ -153,11 +182,19 @@ class POP909ChordEstimationEvalDataset(
+         fold: str = "0",
+         n_folds: int = 5,
+         val_ratio: float = 0.15,
+-        max_songs: int | None = None,
++        max_songs: int | str | None = None,
+     ) -> None:
+         self.dataset_id = "pop909-chord"
++        # `resolve_max_songs` keeps the historical 30-song default (and the
++        # "all"/env-var override) that every existing pop909_chord/root number
++        # was computed against; upstream's plain `max_songs` defaults to None
++        # (= all 909), which would silently change the corpus under those runs.
+         self._init_pop909(
+-            root_dir, fold, n_folds=n_folds, val_ratio=val_ratio, max_songs=max_songs
++            root_dir,
++            fold,
++            n_folds=n_folds,
++            val_ratio=val_ratio,
++            max_songs=resolve_max_songs(max_songs),
+         )
+         self._index = self._build_index()
+         self.class_labels = sorted(
+@@ -180,7 +217,7 @@ class POP909ChordEstimationEvalDataset(
+                 ],
+             )
+             for song_id in self._song_ids()
+-        ]
++        ]  # `_song_ids()` already applies self.max_songs
+ 
+     @staticmethod
+     def _chord_label(root: str, quality: str) -> str:
+@@ -196,7 +233,7 @@ class POP909RootEstimationEvalDataset(
+         fold: str = "0",
+         n_folds: int = 5,
+         val_ratio: float = 0.15,
+-        max_songs: int | None = None,
++        max_songs: int | str | None = None,
+     ) -> None:
+         self.dataset_id = "pop909-root"
+         chord_dataset = POP909ChordEstimationEvalDataset(
+@@ -206,6 +243,7 @@ class POP909RootEstimationEvalDataset(
+             val_ratio=val_ratio,
+             max_songs=max_songs,
+         )
++        self.max_songs = chord_dataset.max_songs
+         self.root_dir = chord_dataset.root_dir
+         self.fold = chord_dataset.fold
+         self.max_songs = chord_dataset.max_songs

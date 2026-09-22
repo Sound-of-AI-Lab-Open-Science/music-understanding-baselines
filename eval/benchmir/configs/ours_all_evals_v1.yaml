@@ -1,0 +1,237 @@
+# All six BenchMIR tasks x our three pre-trained symbolic-music models.
+#
+# Each checkpoint appears three times, because a Model instance commits to ONE
+# FeatureExtractor via build_extractor(): the "-song" entries return an
+# EmbeddingExtractor (CIPI / EMOPIA / TopMAGD), the "-frameN" entries a
+# FrameEmbeddingExtractor (POP909 chord / root / key). All three entries of a
+# checkpoint read the same content-hashed per-bar embedding cache under
+# ${BENCHMIR_OURS_CACHE}/, so only the first one costs anything.
+#
+# Probe settings are the example configs' defaults, unchanged: MLP [256, 256]
+# with dropout 0.2, Adam lr 1e-3, batch 64, 50 epochs, seed 42, folds "all".
+#
+# `frames_per_bar` on the frame entries: see models/ours_common.BarEmbeddingModel -- the probe trains only on frames that
+# lie entirely inside one labelled segment (min_overlap = 1.0), and POP909
+# chord segments are shorter than a bar, so a single frame per bar leaves
+# almost no training data.
+
+run:
+  run_id: "ours_all_evals_v1"
+  seed: 42
+  output_dir: "${RUN_ROOT}/ours_all_evals_v1"
+
+model:
+  - class: "MusicJEPAEmbeddingModel"
+    model_id: "music-jepa-song"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "song"
+      device: "cuda"
+  # chord/root: labelled segments are ~1 s against a ~2 s bar, so a single
+  # frame per bar leaves only 49% of frames fully inside one segment.
+  - class: "MusicJEPAEmbeddingModel"
+    model_id: "music-jepa-frame8"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "frame"
+      frames_per_bar: 8
+      device: "cuda"
+  # key: segments are merged runs (median 5.5 s), so one frame per bar is
+  # already 97.8% fully-inside -- subdividing would only inflate row count.
+  - class: "MusicJEPAEmbeddingModel"
+    model_id: "music-jepa-frame1"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "frame"
+      frames_per_bar: 1
+      device: "cuda"
+
+  - class: "MusicBERTEmbeddingModel"
+    model_id: "musicbert-song"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "song"
+      device: "cuda"
+  # chord/root: labelled segments are ~1 s against a ~2 s bar, so a single
+  # frame per bar leaves only 49% of frames fully inside one segment.
+  - class: "MusicBERTEmbeddingModel"
+    model_id: "musicbert-frame8"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "frame"
+      frames_per_bar: 8
+      device: "cuda"
+  # key: segments are merged runs (median 5.5 s), so one frame per bar is
+  # already 97.8% fully-inside -- subdividing would only inflate row count.
+  - class: "MusicBERTEmbeddingModel"
+    model_id: "musicbert-frame1"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "frame"
+      frames_per_bar: 1
+      device: "cuda"
+
+  - class: "MuseTokEmbeddingModel"
+    model_id: "musetok-song"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "song"
+      device: "cuda"
+  # chord/root: labelled segments are ~1 s against a ~2 s bar, so a single
+  # frame per bar leaves only 49% of frames fully inside one segment.
+  - class: "MuseTokEmbeddingModel"
+    model_id: "musetok-frame8"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "frame"
+      frames_per_bar: 8
+      device: "cuda"
+  # key: segments are merged runs (median 5.5 s), so one frame per bar is
+  # already 97.8% fully-inside -- subdividing would only inflate row count.
+  - class: "MuseTokEmbeddingModel"
+    model_id: "musetok-frame1"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "frame"
+      frames_per_bar: 1
+      device: "cuda"
+
+  # Diagnostic control. The default JEPA checkpoint used by the `music-jepa-*`
+  # arms above (`$JEPA_CKPT`) turns out to have a collapsed encoder (mean
+  # within-song bar cosine 0.9997, effective rank 25/512); a SECOND JEPA
+  # pretraining seed (`$JEPA_CKPT_SEED2`) run through the identical code gives
+  # 0.5485, which is what shows that the collapse is in the checkpoint and not
+  # in the adapter. Like `$JEPA_CKPT`, that file is supplied by you and is not
+  # produced by this package; env.sh gives it a default location and
+  # check_data.sh reports whether it is there.
+  - class: "MusicJEPAEmbeddingModel"
+    model_id: "music-jepa-champA-song"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "song"
+      device: "cuda"
+      checkpoint_path: "${JEPA_CKPT_SEED2}"
+      cache_name: "music-jepa-champA"
+  - class: "MusicJEPAEmbeddingModel"
+    model_id: "music-jepa-champA-frame8"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "frame"
+      frames_per_bar: 8
+      device: "cuda"
+      checkpoint_path: "${JEPA_CKPT_SEED2}"
+      cache_name: "music-jepa-champA"
+  - class: "MusicJEPAEmbeddingModel"
+    model_id: "music-jepa-champA-frame1"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "frame"
+      frames_per_bar: 1
+      device: "cuda"
+      checkpoint_path: "${JEPA_CKPT_SEED2}"
+      cache_name: "music-jepa-champA"
+
+datasets:
+  - dataset_id: "cipi"
+    class: "CIPIDifficultyEstimationEvalDataset"
+    root_dir: "${BENCHMIR_DATA_ROOT}/cipi/"
+    kwargs:
+      target_class: "henle"
+      symbolic_format: "midi"
+
+  - dataset_id: "emopia"
+    class: "EMOPIAEmotionClassificationEvalDataset"
+    root_dir: "${BENCHMIR_DATA_ROOT}/emopia/"
+    kwargs:
+      target_class: "4Q"
+
+  - dataset_id: "topmagd"
+    class: "MSDTopMAGDGenreClassificationEvalDataset"
+    root_dir: "${BENCHMIR_DATA_ROOT}/LMDMatched/"
+    kwargs:
+      use_all_matches: False
+      n_folds: 5
+      val_ratio: 0.15
+
+  - dataset_id: "pop909-chord"
+    class: "POP909ChordEstimationEvalDataset"
+    root_dir: "${BENCHMIR_DATA_ROOT}/POP909cl/"
+    kwargs:
+      n_folds: 5
+      val_ratio: 0.15
+
+  - dataset_id: "pop909-root"
+    class: "POP909RootEstimationEvalDataset"
+    root_dir: "${BENCHMIR_DATA_ROOT}/POP909cl/"
+    kwargs:
+      n_folds: 5
+      val_ratio: 0.15
+
+  - dataset_id: "pop909-key"
+    class: "POP909KeyEstimationEvalDataset"
+    root_dir: "${BENCHMIR_DATA_ROOT}/POP909cl/"
+    kwargs:
+      n_folds: 5
+      val_ratio: 0.15
+
+eval_tasks:
+  - task_id: "cipi_difficulty"
+    class: "CIPIDifficultyProbeTask"
+    dataset_id: "cipi"
+    model_ids: ["music-jepa-song", "musicbert-song", "musetok-song", "music-jepa-champA-song"]
+    folds: "all"
+    metrics: ["accuracy"]
+    probe: {type: "mlp", hidden_dims: [256, 256], dropout: 0.2}
+    training: {optimizer: "adam", learning_rate: 0.001, batch_size: 64, max_epochs: 50}
+
+  # EMOPIA defines no folds -- its split is the official song-level one
+  # (metadata_by_song.csv, random_state=1), so `folds` is omitted here.
+  - task_id: "emopia_emotion"
+    class: "EMOPIASentimentRecognitionDownstreamEvalTask"
+    dataset_id: "emopia"
+    model_ids: ["music-jepa-song", "musicbert-song", "musetok-song", "music-jepa-champA-song"]
+    metrics: ["accuracy"]
+    probe: {type: "mlp", hidden_dims: [256, 256], dropout: 0.2}
+    training: {optimizer: "adam", learning_rate: 0.001, batch_size: 64, max_epochs: 50}
+
+  - task_id: "topmagd_genre"
+    class: "MSDTopMAGDGenreClassificationDownstreamEvalTask"
+    dataset_id: "topmagd"
+    model_ids: ["music-jepa-song", "musicbert-song", "musetok-song", "music-jepa-champA-song"]
+    folds: "all"
+    metrics: ["accuracy"]
+    probe: {type: "mlp", hidden_dims: [256, 256], dropout: 0.2}
+    training: {optimizer: "adam", learning_rate: 0.001, batch_size: 64, max_epochs: 50}
+
+  - task_id: "pop909_chord"
+    class: "POP909ChordEstimationDownstreamEvalTask"
+    dataset_id: "pop909-chord"
+    model_ids: ["music-jepa-frame8", "musicbert-frame8", "musetok-frame8", "music-jepa-champA-frame8"]
+    folds: "all"
+    metrics: ["accuracy"]
+    probe: {type: "mlp", hidden_dims: [256, 256], dropout: 0.2}
+    training: {optimizer: "adam", learning_rate: 0.001, batch_size: 64, max_epochs: 50}
+
+  - task_id: "pop909_root"
+    class: "POP909RootEstimationDownstreamEvalTask"
+    dataset_id: "pop909-root"
+    model_ids: ["music-jepa-frame8", "musicbert-frame8", "musetok-frame8", "music-jepa-champA-frame8"]
+    folds: "all"
+    metrics: ["accuracy", "chord_root"]
+    probe: {type: "mlp", hidden_dims: [256, 256], dropout: 0.2}
+    training: {optimizer: "adam", learning_rate: 0.001, batch_size: 64, max_epochs: 50}
+
+  - task_id: "pop909_key"
+    class: "POP909KeyEstimationDownstreamEvalTask"
+    dataset_id: "pop909-key"
+    model_ids: ["music-jepa-frame1", "musicbert-frame1", "musetok-frame1", "music-jepa-champA-frame1"]
+    folds: "all"
+    metrics: ["accuracy", "key_weighted_score"]
+    probe: {type: "mlp", hidden_dims: [256, 256], dropout: 0.2}
+    training: {optimizer: "adam", learning_rate: 0.001, batch_size: 64, max_epochs: 50}
+
+report:
+  # NOT "markdown": reporting/formats/markdown_writer.py:14 raises
+  # NotImplementedError. The consolidated markdown table is built from this
+  # json afterwards by eval/benchmir/scripts_ours/make_report.py.
+  format: "json"

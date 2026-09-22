@@ -1,0 +1,4 @@
+[submodule "third_party/BenchMIR"]
+	path = third_party/BenchMIR
+	url = https://github.com/Wu0219/BenchMIR.git
+	branch = jepa-reproduce

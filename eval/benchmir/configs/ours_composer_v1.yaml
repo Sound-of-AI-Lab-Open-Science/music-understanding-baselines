@@ -1,0 +1,153 @@
+# Humdrum composer classification -- all EIGHT arms.
+#
+# The task is upstream's `HumdrumComposerClassificationDownstreamEvalTask`
+# (src/benchmir/eval/tasks/corpora/humdrum_composer_task.py) over
+# `HumdrumComposerClassificationEvalDataset`: 1,968 scores, 20 composers,
+# 5 folds shipped in `splits/composer_splits_5fold.json`.
+#
+# Song level, mean-pooled bars -- the same EmbeddingExtractor path CIPI /
+# EMOPIA / TopMAGD use -- so every arm here is directly comparable with its
+# `cipi_difficulty` / `emopia_emotion` / `topmagd_genre` column in passes 1
+# and 2. Only the "-song" entries exist: nothing in this task is frame level.
+#
+# `max_examples_per_class` is NOT set. Upstream's debug config
+# (configs/example_humdrum_composer_debug_v1.yaml) sets it to 5 -- 20 x 5 =
+# ~100 songs, a smoke test -- while its full-corpus config
+# (configs/example_all_evals_v1.yaml, task T7) leaves it at the class default
+# of None. This is the full-corpus setting, so it is left alone.
+#
+# Metrics: the task's build_metric_fns() returns accuracy (from
+# SingleLabelClassificationDownstreamEvalTask) plus balanced_accuracy,
+# weighted_f1 and macro_f1. `metrics:` in a config is NOT a filter --
+# DownstreamEvalTask.run() scores every entry of metric_fns -- so all four
+# come out regardless; the list is written out to say what is expected.
+#
+# device: "cpu" everywhere. Every job in this pass is a CPU job (the eval
+# harness's torch has no CUDA wheel for many drivers), and `device`
+# is deliberately not part of the cache salt, so these entries read and write
+# exactly the caches passes 1 and 2 filled on GPU.
+#
+# Probe: pass 1's, unchanged. MLP [256, 256] dropout 0.2, Adam lr 1e-3,
+# batch 64, 50 epochs, seed 42, folds "all".
+
+run:
+  run_id: "ours_composer_v1"
+  seed: 42
+  output_dir: "${RUN_ROOT}/composer_v1"
+
+model:
+  # ---- pass 1: the released / previously trained checkpoints -------------
+  # Each of these keeps its pass-1 default checkpoint and pass-1 cache_name,
+  # so their ~10k cached npz are reused and only the 1,968 new Humdrum files
+  # are encoded.
+  - class: "MusicBERTEmbeddingModel"
+    model_id: "musicbert-song"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "song"
+      device: "cpu"
+
+  - class: "MuseTokEmbeddingModel"
+    model_id: "musetok-song"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "song"
+      device: "cpu"
+
+  # The default JEPA checkpoint (`$JEPA_CKPT`). Kept in the table even though
+  # its encoder is collapsed
+  # (mean within-song bar cosine 0.9997, effective rank 25/512) -- that is a
+  # result about the checkpoint, and dropping it would hide it.
+  - class: "MusicJEPAEmbeddingModel"
+    model_id: "music-jepa-song"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "song"
+      device: "cpu"
+
+  - class: "MusicJEPAEmbeddingModel"
+    model_id: "music-jepa-champA-song"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "song"
+      device: "cpu"
+      checkpoint_path: "${JEPA_CKPT_SEED2}"
+      cache_name: "music-jepa-champA"
+
+  # ---- pass 2: the MuseScore retrains ------------------------------------
+  # Checkpoint paths are the SNAPSHOTS recorded in
+  # ${JOBS_ROOT}/<arm>/_checkpoints.txt, so this
+  # pass evaluates literally the weights pass 2's table was computed from.
+  # A `.ckpt` is content-hashed into the cache salt (ours_common.checkpoint_salt),
+  # so pointing an arm at a different step can never serve stale embeddings.
+  - class: "MusicBERTEmbeddingModel"
+    model_id: "musicbert_musescore-song"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "song"
+      device: "cpu"
+      checkpoint_path: "${CHECKPOINT_ROOT}/musicbert.ckpt"
+      cache_name: "musicbert_musescore"
+
+  # ts_fallback: dominant is required by the corpus vocabulary, not optional --
+  # see the note in configs/ours_all_evals_pass2.yaml. The corpus dictionary can
+  # express 1/16, so a pickup bar survives midi_analyzer's "the first time
+  # signature governs the whole piece" rule and turns a movement into thousands
+  # of sixteenth-note bars.
+  # Humdrum is engraved scores, i.e. exactly the anacrusis-heavy case.
+  - class: "MuseTokEmbeddingModel"
+    model_id: "musetok_musescore-song"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "song"
+      device: "cpu"
+      checkpoint_path: "${CHECKPOINT_ROOT}/musetok.ckpt"
+      vocab_path: "${MUSETOK_MUSESCORE_VOCAB}"
+      ts_fallback: "dominant"
+      cache_name: "musetok_musescore"
+
+  - class: "MusicJEPAEmbeddingModel"
+    model_id: "jepa_musescore_champA-song"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "song"
+      device: "cpu"
+      checkpoint_path: "${CHECKPOINT_ROOT}/jepa_champA.ckpt"
+      cache_name: "jepa_musescore_champA"
+
+  - class: "MusicJEPAEmbeddingModel"
+    model_id: "jepa_musescore_paper-song"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "song"
+      device: "cpu"
+      checkpoint_path: "${CHECKPOINT_ROOT}/jepa_paper.ckpt"
+      cache_name: "jepa_musescore_paper"
+
+datasets:
+  - dataset_id: "humdrum_composer"
+    class: "HumdrumComposerClassificationEvalDataset"
+    root_dir: "${BENCHMIR_DATA_ROOT}/humdrum/"
+    kwargs:
+      target_class: "composer"
+      symbolic_format: "midi"
+      # max_examples_per_class deliberately absent: full corpus, 1,968 songs.
+
+eval_tasks:
+  - task_id: "humdrum_composer"
+    class: "HumdrumComposerClassificationDownstreamEvalTask"
+    dataset_id: "humdrum_composer"
+    model_ids: ["musicbert-song", "musetok-song", "music-jepa-song",
+                "music-jepa-champA-song", "musicbert_musescore-song",
+                "musetok_musescore-song", "jepa_musescore_champA-song",
+                "jepa_musescore_paper-song"]
+    folds: "all"
+    metrics: ["accuracy", "balanced_accuracy", "weighted_f1", "macro_f1"]
+    probe: {type: "mlp", hidden_dims: [256, 256], dropout: 0.2}
+    training: {optimizer: "adam", learning_rate: 0.001, batch_size: 64, max_epochs: 50}
+
+report:
+  # NOT "markdown": reporting/formats/markdown_writer.py raises
+  # NotImplementedError. CONSOLIDATED.md is built from these json files
+  # afterwards by scripts_ours/make_report_composer.py.
+  format: "json"

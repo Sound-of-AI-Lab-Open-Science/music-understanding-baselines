@@ -1,0 +1,180 @@
+# MuseTok residual-VQ tokenizer pre-training.
+#
+# Architecture from the upstream checkout's config/tokenization.yaml:
+# 12L/8H/512 (d_ff 2048) encoder AND decoder, d_embed 512, d_latent 128,
+# 16 quantizers x codebook 2048, ResidualSimVQ with rotation_trick, Adam
+# 1e-4 -> 5e-6, 200 warmup steps, loss = recons_ce + 1.0 * commit, grad-norm
+# clip 0.5, 16 bars, enc_seqlen 128, dec_seqlen 1280, pitch augmentation on.
+#
+# Deviations from upstream, all deliberate:
+#   * effective batch 64 (upstream 24) -- the target recipe for this corpus
+#   * ~45k steps rather than upstream's 150k decay horizon, with lr_decay_steps
+#     tracking max_steps: a cosine that never reaches min_lr is not the schedule
+#   * `training.device` dropped -- Lightning owns device placement
+#   * balanced_density sampling OFF -- it needs a density2pieces pickle built
+#     over this corpus by upstream's data_processing/data_split.py. Build it,
+#     set data.balanced_density + data.density_path, and RESTART: it changes
+#     sampling, so it cannot be turned on mid-run.
+#
+# Corpus: a REMI+ union cache built by run_tokenize.sh + run_union.sh and passed
+# with --cache-prebuilt.
+#
+# Environment: the `musetok` conda env (envs/musetok.yml). Its miditoolkit pin
+# (1.0.0) is load-bearing -- see THIRD_PARTY_NOTICES.md.
+# Run it as: run_pretrain.sh musetok [--smoke]
+#
+# This is a GPU job with a large decoder softmax; submit it, do not run it on a
+# shared login node.
+
+seed: 42
+
+data:
+  # As in jepa_paper.yaml: the filter must stay unset so the tokenization cache
+  # fingerprint does not change.  Restrict post-hoc with
+  # run_union.sh --keep-ids.
+  filter:
+    id_column: null
+    match: id
+    keep_columns: []
+    drop_columns: []
+    require_listed: true
+
+  # CORPUS-DERIVED vocabulary, not the released one.
+  #
+  # Upstream's released data/dictionary.pkl is a 167-event vocabulary (n_token 168)
+  # derived from a piano corpus and carrying only 12 time signatures.  MuseScore-big
+  # is multi-instrument and metrically far more diverse, so REMIEventDataset's
+  # event2idx['<name>_<value>'] raises KeyError on the first piece outside it.
+  # A 200-step smoke died exactly that way on
+  # 'Time_Signature_1/8', and a sample of 10,000 shard-0 pieces showed 23.7% of
+  # them carry at least one out-of-vocab event (292 distinct types: 226 Beat_*,
+  # 59 Time_Signature_*, 7 Note_Duration_*).  Nearly a quarter of the corpus is
+  # unrepresentable in the public vocabulary.
+  #
+  # Deriving the vocabulary from the corpus is also what the paper did, so for a
+  # from-scratch retrain this is the faithful choice, not a workaround.
+  #
+  # CONSEQUENCE, stated loudly: the union-with-build_full_vocab is re-sorted, so
+  # token ids SHIFT.  Checkpoints from this run are NOT vocabulary-compatible
+  # with the public MuseTok weights, and any adapter that assumes
+  # n_token == 168 must not be pointed at them without this dictionary.
+  #
+  # Built by cache_tools/build_musescore_vocab.py over ALL REMI+ shard caches
+  # (run_union.sh does this and refuses to continue if a shard is missing).
+  # rebuild_vocab stays false because upstream's events2dictionary is
+  # non-recursive and would choke on the union cache's s<NN>/ shard symlinks.
+  vocab_path: ${VOCAB_ROOT}/dictionary_musescore.pkl
+  rebuild_vocab: false
+
+  max_bars: 16
+  enc_seqlen: 128
+  dec_seqlen: 1280
+  # Micro-batch 16 x accumulate_grad_batches 4 = the intended EFFECTIVE batch 64.
+  #
+  # 64 in one go OOMs a 15 GB T4, and the corpus vocabulary is why: the decoder
+  # emits [batch, dec_seqlen, n_token] logits, and n_token went 168 -> 1548, so
+  # that tensor grew 9.2x (55 MB -> 507 MB per copy at batch 64, and
+  # cross-entropy holds several copies).  A batch-64 smoke died with 13.38 GiB
+  # allocated trying to add another GiB.
+  #
+  # NOT small enough for a 15 GB card, despite what the paragraph above might
+  # suggest: MEASURED, this recipe needs more than one.  A 30-step run on a
+  # Tesla T4 (15,360 MiB) died with 14.35 GiB already allocated by PyTorch, and
+  # the decoder softmax is not what filled it -- the corpus vocabulary was
+  # n_token 161 in that test.  The [batch, dec_seqlen, dec_seqlen] attention is:
+  # 16 x 1280 x 1280 per head per layer, over 8 heads and 12 decoder layers,
+  # with the forward activations kept for backward.
+  #
+  # So this micro-batch assumes a >=24 GB card and the chain must be pinned to
+  # one -- JR_SLURM_GRES (e.g. "gpu:l40s:1") and JR_SLURM_EXCLUDE are the knobs;
+  # see README.md.  On a cluster whose pool is smaller than that, halve this to
+  # 8 and DOUBLE trainer.accumulate_grad_batches to 8: effective batch stays 64,
+  # so the optimisation is unchanged and only per-step throughput moves.  That
+  # is exactly what the smoke block below does, which is why a smoke fits a T4
+  # and this does not.
+  batch_size: 16
+  do_augment: true
+  balanced_density: false
+  density_path: null
+
+  # Explicit song-level split (98/1/1, seed 42) rather than the datamodule's
+  # seeded shuffle, so JEPA and MuseTok hold out the SAME songs.  Written by
+  # pretrain/scripts/make_musescore_split.py and mapped to merged piece names by
+  # cache_tools/merge_shard_caches.py -- only the merge knows the shard prefix.
+  # Both files are produced by run_union.sh.
+  train_pieces_file: ${SPLIT_DIR}/pieces_train.txt
+  val_pieces_file: ${SPLIT_DIR}/pieces_val.txt
+  val_fraction: 0.01
+  val_max_pieces: 2048            # 1% of 1.5 M would be 15 k pieces; cap it
+  num_workers: 3
+
+model:
+  enc_n_layer: 12
+  enc_n_head: 8
+  enc_d_model: 512
+  enc_d_ff: 2048
+  dec_n_layer: 12
+  dec_n_head: 8
+  dec_d_model: 512
+  dec_d_ff: 2048
+  d_embed: 512
+  d_latent: 128
+  num_quantizers: 16
+  codebook_size: 2048
+  rotation_trick: true
+  rvq_type: SimVQ
+
+optim:
+  beta: 1
+  max_lr: 1.0e-4
+  min_lr: 5.0e-6
+  lr_warmup_steps: 200
+  lr_decay_steps: 45000
+
+trainer:
+  max_epochs: -1
+  max_steps: 45000
+  accumulate_grad_batches: 4      # x batch_size 16 = effective batch 64
+  precision: 32-true              # upstream is fp32; the VQ is unmixed
+  gradient_clip_val: 0.5
+  accelerator: gpu
+  devices: 1
+  log_every_n_steps: 100
+  ckpt_every_n_steps: 500
+  val_check_interval: 2000
+  limit_val_batches: 20
+  num_sanity_val_steps: 0
+  enable_progress_bar: false
+
+smoke:
+  # As in jepa_paper.yaml, with ONE documented exception.  Precision, seq
+  # lengths and the EFFECTIVE batch are production's; the step count and the
+  # split wiring change (pieces_*.txt are emitted by the union merge and cannot
+  # exist before the REMI+ shard caches do) -- and so does the micro-batch.
+  #
+  # 16 x dec_seqlen 1280 does not fit a 15 GB card (see data.batch_size above),
+  # and a smoke that only runs on the biggest GPU in the pool is not a smoke: it
+  # is the thing it was supposed to de-risk.  8 x accumulate 8 is the same
+  # effective batch 64 on half the activation memory, so what a smoke proves
+  # about the optimisation still holds; what does NOT extrapolate from it is
+  # seconds-per-step, which is per-micro-batch.
+  limit_files: 20
+  data:
+    train_pieces_file: null
+    val_pieces_file: null
+    val_max_pieces: 32
+    num_workers: 2
+    batch_size: 8
+  optim:
+    lr_warmup_steps: 20
+    lr_decay_steps: 200
+  trainer:
+    max_steps: 200
+    max_epochs: -1
+    accumulate_grad_batches: 8    # x batch_size 8 = effective batch 64, as production
+    precision: 32-true
+    accelerator: gpu
+    log_every_n_steps: 20
+    ckpt_every_n_steps: 100
+    val_check_interval: 100
+    limit_val_batches: 5

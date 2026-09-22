@@ -1,0 +1,79 @@
+# CIPI difficulty on the OFFICIAL movement-level difficulty_cipi, for the four
+# pass-1 checkpoints.
+#
+# Why this config exists at all
+# ----------------------------
+# `runs/v1`'s CIPI column was computed against a hand-built index that is
+# piece-level: 569 rows, ids like `c-1`. The official `difficulty_cipi`
+# distribution, which the harness resolves under
+# `${BENCHMIR_DATA_ROOT}/cipi/difficulty_cipi`, is MOVEMENT-level: 592 rows, ids
+# like `c-11::3`. The two id sets do not intersect, so the 5-fold splits are
+# entirely different (350/118/124 per fold) and no cell of one table may be read
+# against the corresponding cell of the other. Henle labels agree on the pieces
+# both cover, so this is a change of unit, not of ground truth.
+#
+# The arms are pass 1's four, unchanged -- released / previously trained
+# weights, NOT the MuseScore retrains. Same probe protocol as pass 1: MLP
+# [256, 256] dropout 0.2, Adam lr 1e-3, batch 64, 50 epochs, seed 42, 5 folds.
+# The only thing that moves is the dataset, which is the point.
+#
+# `root_dir` is the parent, so it resolves to whatever `difficulty_cipi` is; the
+# official tree is a different set of files, hence different content hashes,
+# hence fresh bar-embedding encodes (592 movements x 4 arms).
+
+run:
+  run_id: "cipi_official_v1"
+  seed: 42
+  output_dir: "${RUN_ROOT}/cipi_official_v1"
+
+model:
+  - class: "MusicJEPAEmbeddingModel"
+    model_id: "music-jepa-song"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "song"
+      device: "cuda"
+
+  - class: "MusicJEPAEmbeddingModel"
+    model_id: "music-jepa-champA-song"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "song"
+      device: "cuda"
+      checkpoint_path: "${JEPA_CKPT_SEED2}"
+      cache_name: "music-jepa-champA"
+
+  - class: "MusicBERTEmbeddingModel"
+    model_id: "musicbert-song"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "song"
+      device: "cuda"
+
+  - class: "MuseTokEmbeddingModel"
+    model_id: "musetok-song"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "song"
+      device: "cuda"
+
+datasets:
+  - dataset_id: "cipi"
+    class: "CIPIDifficultyEstimationEvalDataset"
+    root_dir: "${BENCHMIR_DATA_ROOT}/cipi/"
+    kwargs:
+      target_class: "henle"
+      symbolic_format: "midi"
+
+eval_tasks:
+  - task_id: "cipi_difficulty"
+    class: "CIPIDifficultyProbeTask"
+    dataset_id: "cipi"
+    model_ids: ["music-jepa-song", "music-jepa-champA-song", "musicbert-song", "musetok-song"]
+    folds: "all"
+    metrics: ["accuracy"]
+    probe: {type: "mlp", hidden_dims: [256, 256], dropout: 0.2}
+    training: {optimizer: "adam", learning_rate: 0.001, batch_size: 64, max_epochs: 50}
+
+report:
+  format: "json"

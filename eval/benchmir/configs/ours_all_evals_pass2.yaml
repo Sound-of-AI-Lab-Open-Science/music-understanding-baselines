@@ -1,0 +1,367 @@
+# Pass 2 -- the six BenchMIR tasks x four arms, three of them MuseScore-retrained.
+#
+# Arms
+# ----
+#   musicbert                the UNCHANGED pass-1 reference. Same checkpoint,
+#                            same cache, same salt, so its numbers are literally
+#                            pass 1's and any movement elsewhere in the table is
+#                            movement in the retrained models, not in the harness.
+#   jepa_musescore_paper     runs/jepa       -- paper recipe, 16L, use_fme
+#   jepa_musescore_champA    runs/jepa_champA -- 6L champ-A recipe
+#   musetok_musescore        runs/musetok    -- corpus vocabulary, n_token 2684
+#   musicbert_musescore      runs/musicbert  -- MusicBERT base, Lightning ckpt.
+#                            Skipped by gen_jobs_pass2.py until its checkpoint
+#                            exists, so the grid runs before that run does.
+#
+# Swapping in a finished run
+# --------------------------
+# Each checkpoint path is written ONCE, as a YAML anchor on the -song entry, and
+# referenced by the -frame8 / -frame1 entries, so the three granularities of an
+# arm can never disagree about which weights they encoded. Nothing here has to
+# be edited to evaluate a finished run: run_snapshot.sh freezes the checkpoint
+# and run_eval.sh passes the resolved path to gen_jobs_pass2.py, which overrides
+# it per generated job without touching this file.
+#
+# A `.ckpt` path is content-hashed into the embedding cache salt
+# (models/ours_common.checkpoint_salt), so an intermediate checkpoint can never
+# serve its embeddings to a later one. The pass-1 `.pt` paths are salted exactly
+# as before and their caches stay valid.
+#
+# POP909 chord/root appear TWICE: once on the historical 30-song slice and once
+# on all 909 (`max_songs: all`), because pass 1 reported both and the two are
+# not comparable to each other. The `_full` task ids are the 909-song ones.
+#
+# Probe settings are pass 1's, unchanged: MLP [256, 256] dropout 0.2, Adam
+# lr 1e-3, batch 64, 50 epochs, seed 42, folds "all".
+
+run:
+  run_id: "ours_all_evals_pass2"
+  seed: 42
+  output_dir: "${RUN_ROOT}/ours_all_evals_pass2"
+
+model:
+  # ---- reference arm: byte-identical to pass 1 ----------------------------
+  - class: "MusicBERTEmbeddingModel"
+    model_id: "musicbert-song"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "song"
+      device: "cuda"
+  # chord/root: labelled segments are ~1 s against a ~2 s bar, so a single
+  # frame per bar leaves only 49% of frames fully inside one segment.
+  - class: "MusicBERTEmbeddingModel"
+    model_id: "musicbert-frame8"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "frame"
+      frames_per_bar: 8
+      device: "cuda"
+  # key: segments are merged runs (median 5.5 s), so one frame per bar is
+  # already 97.8% fully-inside -- subdividing would only inflate row count.
+  - class: "MusicBERTEmbeddingModel"
+    model_id: "musicbert-frame1"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "frame"
+      frames_per_bar: 1
+      device: "cuda"
+
+  # ---- MuseScore JEPA, paper recipe (16L, use_fme) ------------------------
+  - class: "MusicJEPAEmbeddingModel"
+    model_id: "jepa_musescore_paper-song"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "song"
+      device: "cuda"
+      checkpoint_path: &ckpt_jepa_paper "${CHECKPOINT_ROOT}/jepa_paper.ckpt"
+      cache_name: "jepa_musescore_paper"
+  # chord/root: labelled segments are ~1 s against a ~2 s bar, so a single
+  # frame per bar leaves only 49% of frames fully inside one segment.
+  - class: "MusicJEPAEmbeddingModel"
+    model_id: "jepa_musescore_paper-frame8"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "frame"
+      frames_per_bar: 8
+      device: "cuda"
+      checkpoint_path: *ckpt_jepa_paper
+      cache_name: "jepa_musescore_paper"
+  # key: segments are merged runs (median 5.5 s), so one frame per bar is
+  # already 97.8% fully-inside -- subdividing would only inflate row count.
+  - class: "MusicJEPAEmbeddingModel"
+    model_id: "jepa_musescore_paper-frame1"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "frame"
+      frames_per_bar: 1
+      device: "cuda"
+      checkpoint_path: *ckpt_jepa_paper
+      cache_name: "jepa_musescore_paper"
+
+  # ---- MuseScore JEPA, champ-A recipe (6L) --------------------------------
+  - class: "MusicJEPAEmbeddingModel"
+    model_id: "jepa_musescore_champA-song"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "song"
+      device: "cuda"
+      checkpoint_path: &ckpt_jepa_champA "${CHECKPOINT_ROOT}/jepa_champA.ckpt"
+      cache_name: "jepa_musescore_champA"
+  # chord/root: labelled segments are ~1 s against a ~2 s bar, so a single
+  # frame per bar leaves only 49% of frames fully inside one segment.
+  - class: "MusicJEPAEmbeddingModel"
+    model_id: "jepa_musescore_champA-frame8"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "frame"
+      frames_per_bar: 8
+      device: "cuda"
+      checkpoint_path: *ckpt_jepa_champA
+      cache_name: "jepa_musescore_champA"
+  # key: segments are merged runs (median 5.5 s), so one frame per bar is
+  # already 97.8% fully-inside -- subdividing would only inflate row count.
+  - class: "MusicJEPAEmbeddingModel"
+    model_id: "jepa_musescore_champA-frame1"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "frame"
+      frames_per_bar: 1
+      device: "cuda"
+      checkpoint_path: *ckpt_jepa_champA
+      cache_name: "jepa_musescore_champA"
+
+  # ---- MuseScore MuseTok: corpus vocabulary, NOT the released one --------
+  # vocab_path is not optional here. The retrained weights carry n_token
+  # 2684 and the worker refuses to load them against the 168-token released
+  # dictionary rather than index the wrong embedding rows.
+  #
+  # ts_fallback: dominant is a DELIBERATE deviation from pass 1, forced by
+  # that same vocabulary. Pass 1 replaced a first time signature only when
+  # the released dictionary could not express it, which happened to catch
+  # every pickup-bar meter (1/4, 1/8, 1/16 are all absent from it). The
+  # corpus dictionary HAS 1/16, so the anacrusis now survives and
+  # midi_analyzer applies it to the whole movement: sonata10-2 becomes
+  # 3,447 sixteenth-note bars instead of 216. See
+  # ours_workers/musetok_worker._fix_unrepresentable_time_signature.
+  - class: "MuseTokEmbeddingModel"
+    model_id: "musetok_musescore-song"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "song"
+      device: "cuda"
+      checkpoint_path: &ckpt_musetok "${CHECKPOINT_ROOT}/musetok.ckpt"
+      vocab_path: "${MUSETOK_MUSESCORE_VOCAB}"
+      ts_fallback: "dominant"
+      cache_name: "musetok_musescore"
+  # chord/root: labelled segments are ~1 s against a ~2 s bar, so a single
+  # frame per bar leaves only 49% of frames fully inside one segment.
+  - class: "MuseTokEmbeddingModel"
+    model_id: "musetok_musescore-frame8"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "frame"
+      frames_per_bar: 8
+      device: "cuda"
+      checkpoint_path: *ckpt_musetok
+      vocab_path: "${MUSETOK_MUSESCORE_VOCAB}"
+      ts_fallback: "dominant"
+      cache_name: "musetok_musescore"
+  # key: segments are merged runs (median 5.5 s), so one frame per bar is
+  # already 97.8% fully-inside -- subdividing would only inflate row count.
+  - class: "MuseTokEmbeddingModel"
+    model_id: "musetok_musescore-frame1"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "frame"
+      frames_per_bar: 1
+      device: "cuda"
+      checkpoint_path: *ckpt_musetok
+      vocab_path: "${MUSETOK_MUSESCORE_VOCAB}"
+      ts_fallback: "dominant"
+      cache_name: "musetok_musescore"
+
+  # ---- MuseScore MusicBERT (baselines/train.py, MusicBERT base) -----------
+  # The Lightning checkpoint is not the converted-fairseq blob
+  # MusicBertProbeAdapter demands; ours_workers/musicbert_worker._as_converted_blob
+  # rewrites it into that shape before the adapter sees it, so the adapter's
+  # key-set check -- the thing that stands between us and a half-random backbone
+  # -- runs unchanged on both layouts.
+  #
+  # This arm is SKIPPED by gen_jobs_pass2.py while its checkpoint does not exist,
+  # so the grid still runs before the MuseScore MusicBERT run has produced one.
+  - class: "MusicBERTEmbeddingModel"
+    model_id: "musicbert_musescore-song"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "song"
+      device: "cuda"
+      checkpoint_path: &ckpt_musicbert "${CHECKPOINT_ROOT}/musicbert.ckpt"
+      cache_name: "musicbert_musescore"
+  # chord/root: labelled segments are ~1 s against a ~2 s bar, so a single
+  # frame per bar leaves only 49% of frames fully inside one segment.
+  - class: "MusicBERTEmbeddingModel"
+    model_id: "musicbert_musescore-frame8"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "frame"
+      frames_per_bar: 8
+      device: "cuda"
+      checkpoint_path: *ckpt_musicbert
+      cache_name: "musicbert_musescore"
+  # key: segments are merged runs (median 5.5 s), so one frame per bar is
+  # already 97.8% fully-inside -- subdividing would only inflate row count.
+  - class: "MusicBERTEmbeddingModel"
+    model_id: "musicbert_musescore-frame1"
+    supported_formats: ["midi"]
+    kwargs:
+      granularity: "frame"
+      frames_per_bar: 1
+      device: "cuda"
+      checkpoint_path: *ckpt_musicbert
+      cache_name: "musicbert_musescore"
+
+datasets:
+  - dataset_id: "cipi"
+    class: "CIPIDifficultyEstimationEvalDataset"
+    root_dir: "${BENCHMIR_DATA_ROOT}/cipi/"
+    kwargs:
+      target_class: "henle"
+      symbolic_format: "midi"
+
+  - dataset_id: "emopia"
+    class: "EMOPIAEmotionClassificationEvalDataset"
+    root_dir: "${BENCHMIR_DATA_ROOT}/emopia/"
+    kwargs:
+      target_class: "4Q"
+
+  - dataset_id: "topmagd"
+    class: "MSDTopMAGDGenreClassificationEvalDataset"
+    root_dir: "${BENCHMIR_DATA_ROOT}/LMDMatched/"
+    kwargs:
+      use_all_matches: False
+      n_folds: 5
+      val_ratio: 0.15
+
+  # The historical 30-song slice (pop909cl_eval_corpus.DEFAULT_POP909_MAX_SONGS).
+  - dataset_id: "pop909-chord"
+    class: "POP909ChordEstimationEvalDataset"
+    root_dir: "${BENCHMIR_DATA_ROOT}/POP909cl/"
+    kwargs:
+      n_folds: 5
+      val_ratio: 0.15
+
+  - dataset_id: "pop909-root"
+    class: "POP909RootEstimationEvalDataset"
+    root_dir: "${BENCHMIR_DATA_ROOT}/POP909cl/"
+    kwargs:
+      n_folds: 5
+      val_ratio: 0.15
+
+  # All 909 songs. `max_songs: all` is the kwarg form of
+  # BENCHMIR_POP909_MAX_SONGS=all; it is set here rather than in the environment
+  # so that a job config records which setting produced it.
+  - dataset_id: "pop909-chord-full"
+    class: "POP909ChordEstimationEvalDataset"
+    root_dir: "${BENCHMIR_DATA_ROOT}/POP909cl/"
+    kwargs:
+      n_folds: 5
+      val_ratio: 0.15
+      max_songs: "all"
+
+  - dataset_id: "pop909-root-full"
+    class: "POP909RootEstimationEvalDataset"
+    root_dir: "${BENCHMIR_DATA_ROOT}/POP909cl/"
+    kwargs:
+      n_folds: 5
+      val_ratio: 0.15
+      max_songs: "all"
+
+  # Key estimation never had the 30-song slice; there is only one version.
+  - dataset_id: "pop909-key"
+    class: "POP909KeyEstimationEvalDataset"
+    root_dir: "${BENCHMIR_DATA_ROOT}/POP909cl/"
+    kwargs:
+      n_folds: 5
+      val_ratio: 0.15
+
+eval_tasks:
+  - task_id: "cipi_difficulty"
+    class: "CIPIDifficultyProbeTask"
+    dataset_id: "cipi"
+    model_ids: ["musicbert-song", "jepa_musescore_paper-song", "jepa_musescore_champA-song", "musetok_musescore-song", "musicbert_musescore-song"]
+    folds: "all"
+    metrics: ["accuracy"]
+    probe: {type: "mlp", hidden_dims: [256, 256], dropout: 0.2}
+    training: {optimizer: "adam", learning_rate: 0.001, batch_size: 64, max_epochs: 50}
+
+  # EMOPIA defines no folds -- its split is the official song-level one
+  # (metadata_by_song.csv, random_state=1), so `folds` is omitted here.
+  - task_id: "emopia_emotion"
+    class: "EMOPIASentimentRecognitionDownstreamEvalTask"
+    dataset_id: "emopia"
+    model_ids: ["musicbert-song", "jepa_musescore_paper-song", "jepa_musescore_champA-song", "musetok_musescore-song", "musicbert_musescore-song"]
+    metrics: ["accuracy"]
+    probe: {type: "mlp", hidden_dims: [256, 256], dropout: 0.2}
+    training: {optimizer: "adam", learning_rate: 0.001, batch_size: 64, max_epochs: 50}
+
+  - task_id: "topmagd_genre"
+    class: "MSDTopMAGDGenreClassificationDownstreamEvalTask"
+    dataset_id: "topmagd"
+    model_ids: ["musicbert-song", "jepa_musescore_paper-song", "jepa_musescore_champA-song", "musetok_musescore-song", "musicbert_musescore-song"]
+    folds: "all"
+    metrics: ["accuracy"]
+    probe: {type: "mlp", hidden_dims: [256, 256], dropout: 0.2}
+    training: {optimizer: "adam", learning_rate: 0.001, batch_size: 64, max_epochs: 50}
+
+  - task_id: "pop909_chord"
+    class: "POP909ChordEstimationDownstreamEvalTask"
+    dataset_id: "pop909-chord"
+    model_ids: ["musicbert-frame8", "jepa_musescore_paper-frame8", "jepa_musescore_champA-frame8", "musetok_musescore-frame8", "musicbert_musescore-frame8"]
+    folds: "all"
+    metrics: ["accuracy"]
+    probe: {type: "mlp", hidden_dims: [256, 256], dropout: 0.2}
+    training: {optimizer: "adam", learning_rate: 0.001, batch_size: 64, max_epochs: 50}
+
+  - task_id: "pop909_root"
+    class: "POP909RootEstimationDownstreamEvalTask"
+    dataset_id: "pop909-root"
+    model_ids: ["musicbert-frame8", "jepa_musescore_paper-frame8", "jepa_musescore_champA-frame8", "musetok_musescore-frame8", "musicbert_musescore-frame8"]
+    folds: "all"
+    metrics: ["accuracy", "chord_root"]
+    probe: {type: "mlp", hidden_dims: [256, 256], dropout: 0.2}
+    training: {optimizer: "adam", learning_rate: 0.001, batch_size: 64, max_epochs: 50}
+
+  # 909 songs: ~550k frames instead of ~18k. Same probe, different corpus
+  # size -- never compare a _full number with its 30-song twin.
+  - task_id: "pop909_chord_full"
+    class: "POP909ChordEstimationDownstreamEvalTask"
+    dataset_id: "pop909-chord-full"
+    model_ids: ["musicbert-frame8", "jepa_musescore_paper-frame8", "jepa_musescore_champA-frame8", "musetok_musescore-frame8", "musicbert_musescore-frame8"]
+    folds: "all"
+    metrics: ["accuracy"]
+    probe: {type: "mlp", hidden_dims: [256, 256], dropout: 0.2}
+    training: {optimizer: "adam", learning_rate: 0.001, batch_size: 64, max_epochs: 50}
+
+  - task_id: "pop909_root_full"
+    class: "POP909RootEstimationDownstreamEvalTask"
+    dataset_id: "pop909-root-full"
+    model_ids: ["musicbert-frame8", "jepa_musescore_paper-frame8", "jepa_musescore_champA-frame8", "musetok_musescore-frame8", "musicbert_musescore-frame8"]
+    folds: "all"
+    metrics: ["accuracy", "chord_root"]
+    probe: {type: "mlp", hidden_dims: [256, 256], dropout: 0.2}
+    training: {optimizer: "adam", learning_rate: 0.001, batch_size: 64, max_epochs: 50}
+
+  - task_id: "pop909_key"
+    class: "POP909KeyEstimationDownstreamEvalTask"
+    dataset_id: "pop909-key"
+    model_ids: ["musicbert-frame1", "jepa_musescore_paper-frame1", "jepa_musescore_champA-frame1", "musetok_musescore-frame1", "musicbert_musescore-frame1"]
+    folds: "all"
+    metrics: ["accuracy", "key_weighted_score"]
+    probe: {type: "mlp", hidden_dims: [256, 256], dropout: 0.2}
+    training: {optimizer: "adam", learning_rate: 0.001, batch_size: 64, max_epochs: 50}
+
+report:
+  # NOT "markdown": reporting/formats/markdown_writer.py:14 raises
+  # NotImplementedError. The consolidated markdown table is built from this
+  # json afterwards by scripts_ours/make_report_pass2.py.
+  format: "json"

@@ -1,0 +1,64 @@
+# Single source of truth for every path and name the package needs.
+#
+# This file holds DEFAULTS ONLY. Every key below is exported as an environment
+# variable of the same name in upper case, and an environment variable that is
+# already set always wins -- so nothing here has to be edited to relocate the
+# package; exporting the variable is enough.
+#
+# Both readers -- env.sh (shell) and pkgpaths.py (Python) -- parse this file,
+# resolve the keys in the order they appear, and expand ${...} references to
+# keys resolved above plus ${HOME}. Keep it flat: one `key: value` per line.
+#
+# Which of these you must set for a real run is listed in README.md and checked
+# by check_data.sh.
+
+# ---------------------------------------------------------------- filesystem
+# Raw corpora that the package reads and never writes.
+#   ${DATA_ROOT}/musescore/            pre-training MIDI (recursive; any layout)
+data_root: "${PKG_ROOT}/data"
+
+# Evaluation corpora, in the layout the harness expects. See check_data.sh.
+benchmir_data_root: "${DATA_ROOT}/benchmir"
+
+# Everything the package writes: token caches, splits, vocabularies, training
+# runs, embedding caches, generated job configs, job logs, results.
+work_root: "${PKG_ROOT}/work"
+
+# Frozen checkpoint snapshots. An evaluation only ever reads from here, never
+# from a live training run, so a model can be evaluated while it keeps training.
+checkpoint_root: "${WORK_ROOT}/checkpoints"
+
+# ------------------------------------------------------------------ software
+# Conda installation prefix; its envs/ subdirectory holds the three
+# environments below. The model workers resolve interpreters under it.
+# Left empty on purpose: both readers derive it from the conda installation
+# that is actually running (${CONDA_EXE}, then ${CONDA_PREFIX}, then
+# `command -v conda`). Set $CONDA_ROOT if that guess is wrong for yours.
+conda_root: ""
+
+# Conda environment names. The three are separate because their torch builds
+# are mutually exclusive, not for tidiness -- see README.md.
+jepa_env: "jepa-music"
+musetok_env: "musetok"
+benchmir_env: "benchmir-pkg"
+
+# ---------------------------------------------------------------- third party
+# The evaluation library, vendored as a git submodule at a pinned commit.
+benchmir_root: "${PKG_ROOT}/third_party/BenchMIR"
+
+# The upstream MuseTok checkout. NOT a submodule: upstream publishes no
+# licence file, so setup.sh clones it on request instead of vendoring it.
+# See THIRD_PARTY_NOTICES.md.
+musetok_repo: "${PKG_ROOT}/third_party/MuseTok"
+
+# --------------------------------------------------------------------- SLURM
+# Cluster knobs. Leave a value empty to omit the corresponding sbatch flag.
+# They are exported as JR_SLURM_*, not SLURM_*, deliberately: SLURM_* is the
+# scheduler's own reserved namespace, and a job that sources env.sh would
+# otherwise inherit Slurm's values over the ones configured here.
+slurm_partition: ""
+slurm_gpu_partition: "${JR_SLURM_PARTITION}"
+slurm_account: ""
+slurm_qos: ""
+slurm_exclude: ""
+slurm_gres: "gpu:1"

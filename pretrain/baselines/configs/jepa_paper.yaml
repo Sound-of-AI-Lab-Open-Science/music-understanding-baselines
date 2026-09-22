@@ -1,0 +1,136 @@
+# Music-JEPA pre-training -- the PAPER-TRUE recipe.
+#
+# This is the reference arm: the architecture and optimisation audited against
+# "Using a Joint-Embedding Predictive Architecture for Symbolic Music
+# Understanding", not a smaller variant. The choices that are easy to get wrong:
+#   * encoder_layers 16
+#   * pos_encoding absolute_relative + rel_attn_method 1 -- absolute PE kept in
+#     the input embedding AND Huang et al. 2020 relative attention; this is the
+#     paper's main model, not its "No Absolute PE" ablation
+#   * predictor d=512 / 2 layers / 8 heads ("all latent vectors d=512")
+#   * UNWEIGHTED VICReg: alpha = beta = sigma = 1 (beta=25 is a misreading)
+#   * 5 epochs, effective batch 64 (batch_size 8 x accumulate_grad_batches 8)
+# Everything else (AdamW 1e-4, wd 0.05, 5% warmup + cosine, EMA 0.996 -> 1.0)
+# is the paper's.
+#
+# Corpus: an OctupleMIDI union cache built by run_tokenize.sh + run_union.sh and
+# passed with --cache-prebuilt, so `data.data_root` is deliberately unset here.
+# ${SPLIT_DIR} / ${VOCAB_ROOT} are expanded by train.py from
+# the environment env.sh exports; see README.md.
+#
+# Environment: the `jepa-music` conda env (envs/jepa-music.yml).
+# Run it as: run_pretrain.sh jepa_paper [--smoke]
+
+seed: 42
+
+data:
+  # Corpus restriction is applied POST-HOC, as a keep-list on the already-built
+  # union cache (run_union.sh --keep-ids ...), never here: `filter` feeds the
+  # tokenization cache fingerprint, so setting it would force a full
+  # re-tokenization of the corpus for nothing.
+  filter:
+    id_column: null
+    match: id              # MuseScore-big-MIDI files are <id>.mxl.mid
+    keep_columns: []
+    drop_columns: []
+    require_listed: true
+  dedup: false             # exact .mid/.mxl.mid twins are dropped at merge time
+
+  seq_len: 512
+  batch_size: 8                   # 16L + d512 predictor fits ~24 GB of GPU memory
+  num_workers: 2
+  # Explicit song-level split: the same 98/1/1 assignment the REMI+/MuseTok side
+  # uses, so no song is train for one baseline and val for another.  These are
+  # popped by baselines/models/registry.py before the upstream dataclass sees
+  # them, and they REPLACE the seeded val_fraction split below.
+  train_ids_file: ${SPLIT_DIR}/ids_train.txt
+  val_ids_file: ${SPLIT_DIR}/ids_val.txt
+  val_fraction: 0.01              # fallback only; ignored when the two files above are set
+  fraction: 1.0
+  min_notes: 2
+  base_seed: 1234
+  pad_to_fixed: true
+  random_crop_train: true
+  persistent_workers: false
+
+model:
+  d_model: 512
+  field_embed_dim: 512
+  d_fme: 256
+  encoder_layers: 16
+  encoder_heads: 8
+  encoder_ffn: 2048
+  encoder_dropout: 0.1
+  pos_encoding: absolute_relative
+  rel_attn_method: 1
+  rel_pos_max_distance: 128
+  predictor_dim: 512
+  predictor_layers: 2
+  predictor_heads: 8
+  predictor_ffn: 2048
+  predictor_dropout: 0.1
+  max_positions: 1024
+
+loss:
+  alpha: 1.0
+  beta: 1.0
+  sigma: 1.0
+  gamma: 1.0
+  var_eps: 1.0e-4
+  repr_on_clean: false
+  repr_std_weight: 0.0
+  repr_cov_weight: 0.0
+  repr_pool_weight: 0.0
+  repr_pool_cov_weight: 0.0
+  repr_std_target: 1.0
+
+optim:
+  lr: 1.0e-4
+  weight_decay: 0.05
+  warmup_ratio: 0.05
+  adam_betas: [0.9, 0.95]
+  adam_eps: 1.0e-8
+  min_lr_ratio: 0.0
+  ema_rho_start: 0.996
+  ema_rho_end: 1.0
+  ema_mode: linear
+  total_steps: null
+
+trainer:
+  max_epochs: 5                   # paper protocol
+  max_steps: -1
+  accumulate_grad_batches: 8      # effective batch 64
+  precision: bf16-mixed
+  gradient_clip_val: 1.0
+  accelerator: gpu
+  devices: 1
+  log_every_n_steps: 100
+  ckpt_every_n_steps: 500         # <= 14 d walltime must never lose > ~1 h
+  val_check_interval: 2000
+  limit_val_batches: 50
+  num_sanity_val_steps: 0
+  enable_progress_bar: false
+
+smoke:
+  # A 200-step proof against a REAL cached shard.  batch_size, seq_len and
+  # precision deliberately stay at production values so the measured throughput
+  # extrapolates; only the step count and the split wiring change.
+  limit_files: 20
+  data:
+    # The split files are generated only AFTER tokenization finishes (content
+    # hashes come from the Octuple indexes), so a smoke that runs before then
+    # must not require them.  Nulling them here falls back to the seeded
+    # val_fraction slice -- fine for proving the config loads, NOT acceptable
+    # for a real run, which is why the non-smoke config points at the split.
+    train_ids_file: null
+    val_ids_file: null
+    num_workers: 2
+    persistent_workers: false
+  trainer:
+    max_steps: 200
+    max_epochs: -1
+    accelerator: gpu
+    log_every_n_steps: 20
+    ckpt_every_n_steps: 100
+    val_check_interval: 100
+    limit_val_batches: 5
